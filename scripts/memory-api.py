@@ -6,12 +6,13 @@ from sentence_transformers import SentenceTransformer
 
 import requests
 
+import os
 import json
 import time
 from pathlib import Path
 
 LOG_FILE = Path("/tmp/memory_api.log")
-
+ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "false").lower() == "true"
 
 # CONFIG
 QDRANT_HOST = "localhost"
@@ -185,7 +186,11 @@ def query_model(prompt):
 # -----------------------------
 # log event
 # -----------------------------
+
 def log_event(data):
+    if not ENABLE_LOGGING:
+        return
+
     entry = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         **data
@@ -193,6 +198,7 @@ def log_event(data):
 
     with open(LOG_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
+
 
 
 # -----------------------------
