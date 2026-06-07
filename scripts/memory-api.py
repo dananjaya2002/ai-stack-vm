@@ -6,6 +6,13 @@ from sentence_transformers import SentenceTransformer
 
 import requests
 
+import json
+import time
+from pathlib import Path
+
+LOG_FILE = Path("/tmp/memory_api.log")
+
+
 # CONFIG
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
@@ -36,6 +43,12 @@ class QueryRequest(BaseModel):
 # -----------------------------
 def search_memory(query):
     try:
+        # ✅ Added query initiation log
+        log_event({
+            "type": "search_query",
+            "query": query
+        })
+
         vector = embed_model.encode(query).tolist()
 
         results = client.query_points(
@@ -63,6 +76,15 @@ def search_memory(query):
                 continue
             if "persona" in query.lower() and category != "persons":
                 continue
+
+            # ✅ Added chunk selection log (after filter pass)
+            log_event({
+                "type": "chunk_selected",
+                "file": file,
+                "category": category,
+                "score": r.score,
+                "preview": text[:120]
+            })
 
             if file not in file_chunks:
                 file_chunks[file] = []
@@ -143,6 +165,18 @@ def query_model(prompt):
     except Exception as e:
         return f"⚠️ Model error: {e}"
 
+# -----------------------------
+# log event
+# -----------------------------
+def log_event(data):
+    entry = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        **data
+    }
+
+    with open(LOG_FILE, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
 
 # -----------------------------
 # BASIC ENDPOINTS
@@ -201,8 +235,22 @@ def openai_chat(req: dict):
         contexts = search_memory(user_msg)
         prompt = build_prompt(user_msg, contexts)
 
+        # ✅ Added pre-inference log
+        log_event({
+            "type": "prompt_built",
+            "query": user_msg,
+            "context_size": len(contexts)
+        })
+
         answer = query_model(prompt)
 
+        # ✅ Added post-inference response log
+        log_event({
+            "type": "model_response",
+            "query": user_msg,
+            "response_preview": answer[:200]
+        })
+        
         return {
             "id": "memory-api",
             "object": "chat.completion",
