@@ -14,16 +14,19 @@ from pathlib import Path
 LOG_FILE = Path("/tmp/memory_api.log")
 ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "false").lower() == "true"
 
+
 # CONFIG
-QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
-COLLECTION_NAME = "engineering-memory"
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "engineering-memory")
 
-LLAMA_API = "http://localhost:8082/v1/chat/completions"
-MODEL_NAME = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:8082/v1")
+LLAMA_API = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
+MODEL_NAME = os.getenv("LLM_MODEL", "qwen2.5-coder-7b-instruct-q4_k_m.gguf")
 
-TOP_K = 5
-SCORE_THRESHOLD = 0.5  # ✅ relevance filter
+TOP_K = int(os.getenv("MEMORY_TOP_K", "5"))
+SCORE_THRESHOLD = float(os.getenv("MEMORY_SCORE_THRESHOLD", "0.5"))
+
 
 app = FastAPI()
 
@@ -275,7 +278,7 @@ def openai_chat(req: dict):
         })
 
         return {
-            "id": "memory-api",
+            "id": "memory_api",
             "object": "chat.completion",
             "choices": [
                 {

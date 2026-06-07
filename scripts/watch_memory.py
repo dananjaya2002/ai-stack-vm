@@ -54,7 +54,7 @@ class MemoryChangeHandler(FileSystemEventHandler):
 
         subprocess.run([
             str(Path.home() / "ai-stack/python-envs/qdrant-env/bin/python"),
-            str(Path.home() / "ai-stack/scripts/index-memory.py"),
+            str(Path.home() / "ai-stack/scripts/index_memory.py"),
             file_path
         ])
 
