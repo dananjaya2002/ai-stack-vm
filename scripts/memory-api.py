@@ -22,7 +22,7 @@ LLAMA_API = "http://localhost:8082/v1/chat/completions"
 MODEL_NAME = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
 
 TOP_K = 5
-SCORE_THRESHOLD = 0.6  # ✅ relevance filter
+SCORE_THRESHOLD = 0.5  # ✅ relevance filter
 
 app = FastAPI()
 
@@ -67,6 +67,13 @@ def search_memory(query):
             file = payload.get("file", "")
             category = payload.get("category", "unknown")
 
+            
+            log_event({
+                "type": "chunk_seen",
+                "file": file,
+                "score": r.score
+            })
+
             # ✅ relevance filter
             if r.score < SCORE_THRESHOLD:
                 continue
@@ -94,16 +101,26 @@ def search_memory(query):
 
         # ✅ pick top 2 chunks per file
         for file, chunks in file_chunks.items():
-            # sort by score descending
             chunks = sorted(chunks, key=lambda x: x[0], reverse=True)
 
-            for score, text in chunks[:2]:  # 🔥 allow 2 chunks per file
+            for score, text in chunks[:2]:
                 contexts.append(text)
 
             if len(contexts) >= TOP_K:
                 break
 
-        return contexts[:TOP_K]
+        # ✅ limit final contexts
+        final_contexts = contexts[:TOP_K]
+
+        # ✅ NEW: log final context summary
+        log_event({
+            "type": "final_context",
+            "query": query,
+            "contexts_count": len(final_contexts),
+            "note": "multi-chunk applied"
+        })
+        
+        return final_contexts
 
     except Exception as e:
         print(f"⚠️ Memory search failed: {e}")
@@ -250,7 +267,7 @@ def openai_chat(req: dict):
             "query": user_msg,
             "response_preview": answer[:200]
         })
-        
+
         return {
             "id": "memory-api",
             "object": "chat.completion",
