@@ -11,7 +11,7 @@ import json
 import time
 from pathlib import Path
 
-LOG_FILE = Path("/tmp/memory_api.log")
+LOG_FILE = Path(os.getenv("MEMORY_API_LOG_FILE", "/tmp/memory_api.log"))
 ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "false").lower() == "true"
 
 
