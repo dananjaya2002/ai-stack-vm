@@ -20,47 +20,45 @@ def search(query):
     results = client.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vector,
-        limit=TOP_K * 3  # fetch extra for filtering
+        limit=TOP_K * 4
     )
 
-    if not results.points:
-        print("❌ No results found")
-        return
+    file_chunks = {}
 
-    contexts = []
-    used_files = set()
-
-    for i, result in enumerate(results.points, 1):
-        payload = result.payload or {}
+    for r in results.points:
+        payload = r.payload or {}
 
         file = payload.get("file", "unknown")
         text = payload.get("text", "")
         category = payload.get("category", "unknown")
-        score = result.score
+        score = r.score
 
-        # ✅ relevance filter
         if score < SCORE_THRESHOLD:
             continue
 
-        # ✅ deduplicate per file
-        if file in used_files:
-            continue
+        if file not in file_chunks:
+            file_chunks[file] = []
 
-        used_files.add(file)
-        contexts.append(text)
+        file_chunks[file].append((score, text, category))
 
-        print(f"\n--- Result {len(contexts)} ---")
-        print(f"File: {file}")
-        print(f"Category: {category}")
-        print(f"Score: {round(score, 3)}")
-        print("-" * 40)
-        print(text[:500])
+    result_count = 0
 
-        if len(contexts) >= TOP_K:
-            break
+    for file, chunks in file_chunks.items():
+        chunks = sorted(chunks, key=lambda x: x[0], reverse=True)
 
-    if not contexts:
-        print("⚠️ No relevant results after filtering")
+        print(f"\n📁 File: {file}")
+
+        for score, text, category in chunks[:2]:
+            result_count += 1
+
+            print(f"\n--- Chunk {result_count} ---")
+            print(f"Category: {category}")
+            print(f"Score: {round(score, 3)}")
+            print("-" * 40)
+            print(text[:400])
+
+            if result_count >= TOP_K:
+                return
 
 
 if __name__ == "__main__":

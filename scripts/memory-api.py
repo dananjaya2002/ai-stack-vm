@@ -41,14 +41,15 @@ def search_memory(query):
         results = client.query_points(
             collection_name=COLLECTION_NAME,
             query=vector,
-            limit=TOP_K * 3  # ✅ fetch extra for filtering
+            limit=TOP_K * 4  # ✅ fetch extra for filtering
         )
 
         contexts = []
-        used_files = set()
+        file_chunks = {}   # ✅ store multiple chunks per file
 
         for r in results.points:
             payload = r.payload or {}
+
             text = payload.get("text", "")
             file = payload.get("file", "")
             category = payload.get("category", "unknown")
@@ -57,24 +58,30 @@ def search_memory(query):
             if r.score < SCORE_THRESHOLD:
                 continue
 
-            # ✅ deduplicate (1 chunk per file)
-            if file in used_files:
-                continue
-
-            # ✅ optional category-based filtering
+            # ✅ category filtering (optional)
             if "debug" in query.lower() and category != "debugging":
                 continue
             if "persona" in query.lower() and category != "persons":
                 continue
 
-            if text:
+            if file not in file_chunks:
+                file_chunks[file] = []
+
+            # ✅ collect chunks per file
+            file_chunks[file].append((r.score, text))
+
+        # ✅ pick top 2 chunks per file
+        for file, chunks in file_chunks.items():
+            # sort by score descending
+            chunks = sorted(chunks, key=lambda x: x[0], reverse=True)
+
+            for score, text in chunks[:2]:  # 🔥 allow 2 chunks per file
                 contexts.append(text)
-                used_files.add(file)
 
             if len(contexts) >= TOP_K:
                 break
 
-        return contexts
+        return contexts[:TOP_K]
 
     except Exception as e:
         print(f"⚠️ Memory search failed: {e}")
