@@ -1,10 +1,8 @@
-
 import json
 import os
 from pathlib import Path
 
-LOG_FILE = Path("/tmp/memory_api.log")
-
+LOG_FILE = Path.home() / "ai-stack/logs/memory_api.log"
 
 def show_logs():
     if not LOG_FILE.exists():
