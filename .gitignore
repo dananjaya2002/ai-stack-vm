@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+python-envs/
+venv/
+.env/
+
+# Qdrant data
+qdrant/
+
+# Models
+models/
+
+# Open WebUI data
+open-webui/
+
+# OS
+*.swp
+*.tmp
+.DS_Store
+
+# Logs
+*.log
+
+# Memory (optional, depends on your use)
+
