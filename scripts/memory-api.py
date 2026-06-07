@@ -15,6 +15,7 @@ LLAMA_API = "http://localhost:8082/v1/chat/completions"
 MODEL_NAME = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
 
 TOP_K = 5
+SCORE_THRESHOLD = 0.6  # ✅ relevance filter
 
 app = FastAPI()
 
@@ -31,7 +32,7 @@ class QueryRequest(BaseModel):
 
 
 # -----------------------------
-# MEMORY SEARCH
+# ✅ SMART MEMORY SEARCH
 # -----------------------------
 def search_memory(query):
     try:
@@ -40,14 +41,38 @@ def search_memory(query):
         results = client.query_points(
             collection_name=COLLECTION_NAME,
             query=vector,
-            limit=TOP_K
+            limit=TOP_K * 3  # ✅ fetch extra for filtering
         )
 
-        contexts = [
-            (r.payload or {}).get("text", "")
-            for r in results.points
-            if (r.payload or {}).get("text")
-        ]
+        contexts = []
+        used_files = set()
+
+        for r in results.points:
+            payload = r.payload or {}
+            text = payload.get("text", "")
+            file = payload.get("file", "")
+            category = payload.get("category", "unknown")
+
+            # ✅ relevance filter
+            if r.score < SCORE_THRESHOLD:
+                continue
+
+            # ✅ deduplicate (1 chunk per file)
+            if file in used_files:
+                continue
+
+            # ✅ optional category-based filtering
+            if "debug" in query.lower() and category != "debugging":
+                continue
+            if "persona" in query.lower() and category != "persons":
+                continue
+
+            if text:
+                contexts.append(text)
+                used_files.add(file)
+
+            if len(contexts) >= TOP_K:
+                break
 
         return contexts
 
@@ -57,30 +82,35 @@ def search_memory(query):
 
 
 # -----------------------------
-# PROMPT BUILDER
+# ✅ PROMPT BUILDER
 # -----------------------------
 def build_prompt(query, contexts):
     if contexts:
         context_text = "\n\n".join(contexts)
 
         return f"""
-[MEMORY CONTEXT]
+You are a senior software engineering assistant.
 
-Use this memory to help answer:
+Use the memory context below ONLY if it is relevant.
 
+================ MEMORY =================
 {context_text}
+=========================================
 
-[QUESTION]
+QUESTION:
 {query}
 
-Answer clearly and practically.
+INSTRUCTIONS:
+- Be clear and structured
+- Use memory when relevant
+- Ignore irrelevant memory
 """
     else:
         return f"""
-No memory context found.
-
-Question:
+QUESTION:
 {query}
+
+Answer clearly and practically.
 """
 
 
@@ -101,7 +131,6 @@ def query_model(prompt):
         )
 
         data = res.json()
-
         return data["choices"][0]["message"]["content"]
 
     except Exception as e:
@@ -132,9 +161,8 @@ def search(req: QueryRequest):
 
 
 # -----------------------------
-# ✅ OPENAI COMPATIBLE ENDPOINT
+# ✅ OPENAI COMPATIBLE ENDPOINTS
 # -----------------------------
-
 @app.get("/v1/models")
 def list_models():
     return {
@@ -154,7 +182,6 @@ def openai_chat(req: dict):
     try:
         messages = req.get("messages", [])
 
-        # ✅ Extract latest user message
         user_msg = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
@@ -164,27 +191,11 @@ def openai_chat(req: dict):
         if not user_msg:
             return {"error": "No user message found"}
 
-        # 🔍 Memory search
         contexts = search_memory(user_msg)
+        prompt = build_prompt(user_msg, contexts)
 
-        # 🧠 Build prompt
-        context_text = "\n\n".join(contexts)
+        answer = query_model(prompt)
 
-        enhanced_prompt = f"""
-[MEMORY CONTEXT]
-
-{context_text}
-
-[USER QUESTION]
-{user_msg}
-
-Answer using memory if relevant, otherwise use reasoning.
-"""
-
-        # 🤖 Call model
-        answer = query_model(enhanced_prompt)
-
-        # ✅ OpenAI-compatible response
         return {
             "id": "memory-api",
             "object": "chat.completion",
@@ -201,6 +212,4 @@ Answer using memory if relevant, otherwise use reasoning.
         }
 
     except Exception as e:
-        return {
-            "error": str(e)
-        }
+        return {"error": str(e)}

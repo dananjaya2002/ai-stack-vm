@@ -115,6 +115,7 @@ def index(file_path=None):
                 "payload": {
                     "file": str(file_path),
                     "chunk_index": idx,
+                    "category": file_path.parent.name,
                     "text": chunk
                 }
             }
