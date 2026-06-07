@@ -24,3 +24,7 @@ open-webui/*
 !qdrant/README.md
 !python-envs/README.md
 !open-webui/README.md
+
+#environment files
+*.env
+!.example.memory-api.env
