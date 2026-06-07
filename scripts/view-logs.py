@@ -1,3 +1,4 @@
+
 import json
 import os
 from pathlib import Path
@@ -10,42 +11,78 @@ def show_logs():
         print("❌ No logs found.")
         return
 
-    print("\n📜 --- MEMORY API LOGS ---\n")
+    print("\n📜 ===== MEMORY API DEBUG LOGS =====\n")
 
     with open(LOG_FILE, "r") as f:
         for line in f:
             try:
                 entry = json.loads(line)
 
-                print(f"\n⏱ {entry.get('timestamp')}")
-                print(f"🔹 Type: {entry.get('type')}")
+                log_type = entry.get("type")
 
-                if entry.get("type") == "search_query":
+                print("\n" + "=" * 60)
+                print(f"⏱ {entry.get('timestamp')}")
+                print(f"🔹 Type: {log_type}")
+
+                # -----------------------------
+                # SEARCH QUERY
+                # -----------------------------
+                if log_type == "search_query":
                     print(f"🔍 Query: {entry.get('query')}")
 
-                elif entry.get("type") == "chunk_selected":
+                # -----------------------------
+                # ALL CHUNKS SEEN (optional if added)
+                # -----------------------------
+                elif log_type == "chunk_seen":
+                    print(f"📁 File: {entry.get('file')}")
+                    print(f"⭐ Score: {round(entry.get('score', 0), 3)}")
+
+                # -----------------------------
+                # SELECTED CHUNKS
+                # -----------------------------
+                elif log_type == "chunk_selected":
                     print(f"📁 File: {entry.get('file')}")
                     print(f"📂 Category: {entry.get('category')}")
                     print(f"⭐ Score: {round(entry.get('score', 0), 3)}")
-                    print(f"🧩 Preview: {entry.get('preview')}")
+                    print(f"🧩 Preview:\n{entry.get('preview')}")
 
-                elif entry.get("type") == "final_context":
-                    print(f"🧠 Context count: {entry.get('contexts_count')}")
+                # -----------------------------
+                # FINAL CONTEXT (NEW ✅)
+                # -----------------------------
+                elif log_type == "final_context":
+                    print(f"🧠 Query: {entry.get('query')}")
+                    print(f"📦 Context count: {entry.get('contexts_count')}")
+                    if entry.get("files_used"):
+                        print(f"📁 Files used: {entry.get('files_used')}")
+                    if entry.get("note"):
+                        print(f"📝 Note: {entry.get('note')}")
 
-                elif entry.get("type") == "prompt_built":
+                # -----------------------------
+                # PROMPT BUILT
+                # -----------------------------
+                elif log_type == "prompt_built":
                     print(f"🧠 Prompt built for: {entry.get('query')}")
                     print(f"📦 Context size: {entry.get('context_size')}")
 
-                elif entry.get("type") == "model_response":
-                    print(f"🤖 Response preview:")
-                    print(entry.get("response_preview"))
+                # -----------------------------
+                # MODEL RESPONSE
+                # -----------------------------
+                elif log_type == "model_response":
+                    print(f"🤖 Response preview:\n{entry.get('response_preview')}")
+
+                # -----------------------------
+                # UNKNOWN (fallback)
+                # -----------------------------
+                else:
+                    print(entry)
 
             except Exception:
                 continue
 
 
 def cleanup():
-    choice = input("\n❓ Delete logs? [y/no]: ").strip().lower()
+    print("\n" + "=" * 60)
+    choice = input("❓ Delete logs? [y/no]: ").strip().lower()
 
     if choice == "y":
         try:
@@ -60,4 +97,3 @@ def cleanup():
 if __name__ == "__main__":
     show_logs()
     cleanup()
-
