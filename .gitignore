@@ -2,20 +2,6 @@
 __pycache__/
 *.pyc
 
-# Virtual environments
-python-envs/
-venv/
-.env/
-
-# Qdrant data
-qdrant/
-
-# Models
-models/
-
-# Open WebUI data
-open-webui/
-
 # OS
 *.swp
 *.tmp
@@ -26,3 +12,15 @@ open-webui/
 
 # Memory (optional, depends on your use)
 
+
+# Ignore all files inside folders
+models/*
+qdrant/*
+python-envs/*
+open-webui/*
+
+# BUT keep README files
+!models/README.md
+!qdrant/README.md
+!python-envs/README.md
+!open-webui/README.md
