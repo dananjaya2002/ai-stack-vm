@@ -53,10 +53,20 @@ def log_event(event: str, data: Dict[str, Any]):
     if not ENABLE_LOGGING:
         return
 
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    with LOG_FILE.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"event": event, "data": data}, ensure_ascii=False) + "\n")
+        entry = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "event": event,
+            "data": data,
+        }
+
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    except Exception as e:
+        print(f"⚠️ Logging failed: {e}")
 
 
 def latest_user_message(messages: List[ChatMessage]) -> str:
@@ -69,15 +79,15 @@ def latest_user_message(messages: List[ChatMessage]) -> str:
 def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
     vector = embedder.encode(query).tolist()
 
-    results = client.search(
+    results = client.query_points(
         collection_name=QDRANT_COLLECTION,
-        query_vector=vector,
+        query=vector,
         limit=CODE_TOP_K,
     )
 
     selected = []
 
-    for result in results:
+    for result in results.points:
         if result.score < CODE_SCORE_THRESHOLD:
             continue
 
