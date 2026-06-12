@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --chown=appuser:appuser scripts/code-proxy/code_proxy.py ./code_proxy.py
 COPY --chown=appuser:appuser scripts/code-proxy/index_code.py ./index_code.py
 COPY --chown=appuser:appuser scripts/code-proxy/watch_code.py ./watch_code.py
-COPY --chown=appuser:appuser scripts/code-proxy/.example.code-proxy.env ./.example.code-proxy.env
+COPY --chown=appuser:appuser scripts/code-proxy/code-proxy.env ./code-proxy.env
 
 EXPOSE 9001
 CMD ["uvicorn", "code_proxy:app", "--host", "0.0.0.0", "--port", "9001"]

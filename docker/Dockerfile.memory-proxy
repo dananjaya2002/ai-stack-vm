@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Copy memory-proxy source files only
 COPY --chown=appuser:appuser scripts/memory-proxy/memory_api.py ./memory_api.py
-COPY --chown=appuser:appuser scripts/memory-proxy/.example.memory-api.env ./.example.memory-api.env
+COPY --chown=appuser:appuser scripts/memory-proxy/memory-api.env ./memory-api.env
 
 EXPOSE 9002
 CMD ["uvicorn", "memory_api:app", "--host", "0.0.0.0", "--port", "9002"]
