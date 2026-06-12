@@ -9,7 +9,7 @@ import subprocess
 
 
 # CONFIG
-MEMORY_DIR = Path.home() / "ai-stack/memory"
+MEMORY_DIR = Path.home() / "ai-stack/memory/engineering-memory"
 
 DEBOUNCE_SECONDS = 5   # wait after last change
 MIN_FILE_SIZE = 5      # ignore tiny temp writes
@@ -54,7 +54,7 @@ class MemoryChangeHandler(FileSystemEventHandler):
 
         subprocess.run([
             str(Path.home() / "ai-stack/python-envs/qdrant-env/bin/python"),
-            str(Path.home() / "ai-stack/scripts/index_memory.py"),
+            str(Path.home() / "ai-stack/scripts/memory-proxy/index_memory.py"),
             file_path
         ])
 

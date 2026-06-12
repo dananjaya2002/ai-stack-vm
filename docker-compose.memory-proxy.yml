@@ -1,0 +1,40 @@
+# docker-compose.memory-proxy.yml  –  Runs memory-proxy + Qdrant only
+#
+# Usage:
+#   docker compose -f docker-compose.memory-proxy.yml up -d
+#   docker compose -f docker-compose.memory-proxy.yml down
+#   docker compose -f docker-compose.memory-proxy.yml logs -f
+
+version: "3.9"
+
+services:
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  memory-proxy:
+    image: ai-stack/memory-proxy
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.memory-proxy
+    container_name: memory-proxy
+    env_file:
+      - scripts/memory-proxy/.example.memory-api.env
+    ports:
+      - "9002:9002"
+    depends_on:
+      - qdrant
+    volumes:
+      - memory_logs:/logs/memory
+      - ${HOME}/ai-stack/memory/engineering-memory:/memory/engineering-memory:ro
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  memory_logs:

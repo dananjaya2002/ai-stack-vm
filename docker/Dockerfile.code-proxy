@@ -1,0 +1,17 @@
+# Dockerfile.code-proxy
+# Requires the base image to be built first:
+#   docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
+# Then build this image:
+#   docker build -f docker/Dockerfile.code-proxy -t ai-stack/code-proxy .
+#
+FROM ai-stack/base-deps
+WORKDIR /app
+
+# Copy code-proxy source files only
+COPY --chown=appuser:appuser scripts/code-proxy/code_proxy.py ./code_proxy.py
+COPY --chown=appuser:appuser scripts/code-proxy/index_code.py ./index_code.py
+COPY --chown=appuser:appuser scripts/code-proxy/watch_code.py ./watch_code.py
+COPY --chown=appuser:appuser scripts/code-proxy/.example.code-proxy.env ./.example.code-proxy.env
+
+EXPOSE 9001
+CMD ["uvicorn", "code_proxy:app", "--host", "0.0.0.0", "--port", "9001"]

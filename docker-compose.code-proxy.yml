@@ -1,0 +1,40 @@
+# docker-compose.code-proxy.yml  –  Runs code-proxy + Qdrant only
+#
+# Usage:
+#   docker compose -f docker-compose.code-proxy.yml up -d
+#   docker compose -f docker-compose.code-proxy.yml down
+#   docker compose -f docker-compose.code-proxy.yml logs -f
+
+version: "3.9"
+
+services:
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  code-proxy:
+    image: ai-stack/code-proxy
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.code-proxy
+    container_name: code-proxy
+    env_file:
+      - scripts/code-proxy/.example.code-proxy.env
+    ports:
+      - "9001:9001"
+    depends_on:
+      - qdrant
+    volumes:
+      - code_logs:/logs/code
+      - ${HOME}/ai-stack/memory/code-memory:/memory/code-memory:ro
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  code_logs:

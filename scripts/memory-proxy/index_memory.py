@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 
 
 # CONFIG
-MEMORY_DIR = Path.home() / "ai-stack/memory"
+MEMORY_DIR = Path.home() / "ai-stack/memory/engineering-memory"
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "engineering-memory"
