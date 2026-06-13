@@ -1,8 +1,9 @@
 import os
 import sys
+import re
 import hashlib
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -24,7 +25,13 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "code-memory")
 
-REPOS_ROOT = Path(os.getenv("REPOS_ROOT", str(Path.home() / "ai-stack" / "repos")))
+# Phase 2 default: repos live in memory/code-memory, not ai-stack/repos.
+REPOS_ROOT = Path(
+    os.getenv(
+        "REPOS_ROOT",
+        str(Path.home() / "ai-stack" / "memory" / "code-memory")
+    )
+)
 
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 
@@ -149,7 +156,31 @@ def should_ignore(path: Path) -> bool:
 
 
 def detect_language(path: Path) -> str:
+    name = path.name.lower()
+
+    if name == "dockerfile" or name.endswith(".dockerfile"):
+        return "dockerfile"
+
     return LANG_BY_EXT.get(path.suffix.lower(), "text")
+
+
+def detect_category(path: Path, language: str) -> str:
+    name = path.name.lower()
+    path_text = str(path).lower()
+
+    if language == "markdown":
+        return "docs"
+
+    if language in {"yaml", "json", "toml", "ini", "env", "dockerfile"}:
+        return "config"
+
+    if name in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}:
+        return "config"
+
+    if "test" in path_text or "spec" in path_text:
+        return "test"
+
+    return "code"
 
 
 def stable_id(repo: str, relative_path: str, chunk_index: int) -> int:
@@ -196,6 +227,146 @@ def chunk_text(text: str) -> List[str]:
             break
 
         start = max(0, end - CHUNK_OVERLAP_CHARS)
+
+    return chunks
+
+
+# -----------------------------
+# Symbol extraction
+# -----------------------------
+
+SYMBOL_PATTERNS = {
+    "python": [
+        ("class", re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+        ("async_function", re.compile(r"^\s*async\s+def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+        ("function", re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+        ("fastapi_route", re.compile(r"^\s*@app\.(get|post|put|delete|patch)\([^\n]*", re.MULTILINE)),
+    ],
+    "typescript": [
+        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("export_function", re.compile(r"\bexport\s+function\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("arrow_function", re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")),
+    ],
+    "typescriptreact": [
+        ("react_component", re.compile(r"\b(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)")),
+        ("react_component", re.compile(r"\bconst\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)|[A-Za-z0-9_]+)\s*=>")),
+        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
+    ],
+    "javascript": [
+        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("arrow_function", re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")),
+    ],
+    "javascriptreact": [
+        ("react_component", re.compile(r"\b(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)")),
+        ("react_component", re.compile(r"\bconst\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)|[A-Za-z0-9_]+)\s*=>")),
+        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
+    ],
+    "java": [
+        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
+        ("interface", re.compile(r"\binterface\s+([A-Za-z_][A-Za-z0-9_]*)")),
+    ],
+    "go": [
+        ("function", re.compile(r"^func\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+        ("method", re.compile(r"^func\s+\([^)]+\)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
+        ("struct", re.compile(r"^type\s+([A-Za-z_][A-Za-z0-9_]*)\s+struct", re.MULTILINE)),
+    ],
+}
+
+
+def extract_symbols(text: str, language: str) -> List[Dict[str, object]]:
+    symbols: List[Dict[str, object]] = []
+
+    if language == "markdown":
+        for match in re.finditer(r"^(#{1,6})\s+(.+)$", text, re.MULTILINE):
+            symbols.append(
+                {
+                    "symbol_type": "markdown_section",
+                    "symbol_name": match.group(2).strip(),
+                    "start": match.start(),
+                }
+            )
+        return sorted(symbols, key=lambda x: int(x["start"]))
+
+    patterns = SYMBOL_PATTERNS.get(language, [])
+
+    for symbol_type, pattern in patterns:
+        for match in pattern.finditer(text):
+            if symbol_type == "fastapi_route":
+                symbol_name = f"app.{match.group(1)}"
+            else:
+                symbol_name = match.group(1) if match.groups() else symbol_type
+
+            symbols.append(
+                {
+                    "symbol_type": symbol_type,
+                    "symbol_name": symbol_name,
+                    "start": match.start(),
+                }
+            )
+
+    return sorted(symbols, key=lambda x: int(x["start"]))
+
+
+def chunk_text_with_symbols(text: str, language: str) -> List[Dict[str, object]]:
+    text = text.strip()
+
+    if not text:
+        return []
+
+    symbols = extract_symbols(text, language)
+
+    # If no symbols were found, fall back to normal overlapping text chunks.
+    if not symbols:
+        return [
+            {
+                "text": chunk,
+                "symbol_type": "text_chunk",
+                "symbol_name": None,
+                "symbol_subchunk_index": 0,
+            }
+            for chunk in chunk_text(text)
+        ]
+
+    chunks: List[Dict[str, object]] = []
+
+    # Include preamble/imports before first symbol as one chunk when useful.
+    first_symbol_start = int(symbols[0]["start"])
+    if first_symbol_start > 0:
+        preamble = text[:first_symbol_start].strip()
+        if preamble:
+            for sub_index, sub_chunk in enumerate(chunk_text(preamble)):
+                chunks.append(
+                    {
+                        "text": sub_chunk,
+                        "symbol_type": "file_preamble",
+                        "symbol_name": "file_preamble",
+                        "symbol_subchunk_index": sub_index,
+                    }
+                )
+
+    for i, symbol in enumerate(symbols):
+        start = int(symbol["start"])
+        end = int(symbols[i + 1]["start"]) if i + 1 < len(symbols) else len(text)
+
+        symbol_text = text[start:end].strip()
+
+        if not symbol_text:
+            continue
+
+        sub_chunks = chunk_text(symbol_text)
+
+        for sub_index, sub_chunk in enumerate(sub_chunks):
+            chunks.append(
+                {
+                    "text": sub_chunk,
+                    "symbol_type": symbol["symbol_type"],
+                    "symbol_name": symbol["symbol_name"],
+                    "symbol_subchunk_index": sub_index,
+                }
+            )
 
     return chunks
 
@@ -279,12 +450,13 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
 
     repo = repo_root.name
     language = detect_language(file_path)
+    category = detect_category(file_path, language)
     text = read_file(file_path)
 
     if not text.strip():
         return 0
 
-    chunks = chunk_text(text)
+    chunks = chunk_text_with_symbols(text, language)
 
     if not chunks:
         return 0
@@ -294,16 +466,24 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
     points = []
 
     for chunk_index, chunk in enumerate(chunks):
-        embedding = model.encode(chunk).tolist()
+        chunk_text_value = str(chunk.get("text") or "").strip()
+
+        if not chunk_text_value:
+            continue
+
+        embedding = model.encode(chunk_text_value).tolist()
 
         payload = {
             "repo": repo,
             "file": str(file_path),
             "relative_path": relative_path,
             "language": language,
-            "category": "code",
+            "category": category,
+            "symbol_type": chunk.get("symbol_type"),
+            "symbol_name": chunk.get("symbol_name"),
+            "symbol_subchunk_index": chunk.get("symbol_subchunk_index", 0),
             "chunk_index": chunk_index,
-            "text": chunk,
+            "text": chunk_text_value,
         }
 
         points.append(
@@ -314,13 +494,19 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
             )
         )
 
+    if not points:
+        return 0
+
     client.upsert(
         collection_name=QDRANT_COLLECTION,
         points=points,
         wait=True,
     )
 
-    print(f"✅ Indexed: {repo}/{relative_path} | language={language} | chunks={len(points)}")
+    print(
+        f"✅ Indexed: {repo}/{relative_path} | "
+        f"language={language} | category={category} | chunks={len(points)}"
+    )
     return len(points)
 
 
@@ -388,8 +574,8 @@ def index_target(target: Path):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python index_code.py ~/ai-stack/repos/<repo-name>")
-        print("  python index_code.py ~/ai-stack/repos/<repo-name>/path/to/file.py")
+        print("  python index_code.py ~/ai-stack/memory/code-memory/<repo-name>")
+        print("  python index_code.py ~/ai-stack/memory/code-memory/<repo-name>/path/to/file.py")
         sys.exit(1)
 
     index_target(Path(sys.argv[1]))
