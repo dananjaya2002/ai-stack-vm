@@ -141,6 +141,9 @@ def boost_score(score: float, payload: Dict[str, Any], query: str) -> float:
     path = (payload.get("relative_path") or "").lower()
     language = (payload.get("language") or "").lower()
     text = (payload.get("text") or "").lower()
+    category = (payload.get("category") or "").lower()
+    symbol_type = (payload.get("symbol_type") or "").lower()
+    symbol_name = (payload.get("symbol_name") or "").lower()
 
     if "frontend" in q and "frontend" in path:
         boosted += 0.08
@@ -148,7 +151,7 @@ def boost_score(score: float, payload: Dict[str, Any], query: str) -> float:
     if "backend" in q and "backend" in path:
         boosted += 0.08
 
-    if "api" in q and ("api" in path or "api" in text or "endpoint" in text):
+    if "api" in q and ("api" in path or "api" in text or "endpoint" in text or "route" in text):
         boosted += 0.05
 
     if ("video" in q or "stream" in q) and (
@@ -156,13 +159,45 @@ def boost_score(score: float, payload: Dict[str, Any], query: str) -> float:
     ):
         boosted += 0.08
 
-    if "react" in q and language in {"tsx", "jsx", "typescript", "javascript"}:
+    if "react" in q and language in {
+        "tsx",
+        "jsx",
+        "typescript",
+        "javascript",
+        "typescriptreact",
+        "javascriptreact",
+    }:
         boosted += 0.05
 
-    if "docker" in q and ("docker" in path or "docker" in text):
+    if "docker" in q and ("docker" in path or "docker" in text or language == "dockerfile"):
         boosted += 0.10
 
+    # New symbol-aware boosts
+    if symbol_name and symbol_name in q:
+        boosted += 0.15
+
+    if any(x in q for x in ["component", "ui", "panel", "page", "screen"]):
+        if symbol_type == "react_component":
+            boosted += 0.10
+
+    if any(x in q for x in ["function", "method", "handler", "route", "endpoint"]):
+        if symbol_type in {"function", "async_function", "arrow_function", "fastapi_route", "method"}:
+            boosted += 0.08
+
+    if any(x in q for x in ["class", "service", "manager", "controller"]):
+        if symbol_type in {"class", "interface", "struct"}:
+            boosted += 0.06
+
+    if any(x in q for x in ["docs", "readme", "protocol", "architecture", "guide"]):
+        if category == "docs" or symbol_type == "markdown_section":
+            boosted += 0.08
+
+    if any(x in q for x in ["config", "env", "compose", "yaml", "settings"]):
+        if category == "config":
+            boosted += 0.08
+
     return boosted
+
 
 def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
     expanded_query = expand_query(query)
@@ -194,15 +229,21 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
 
         relative_path = payload.get("relative_path") or payload.get("file") or "unknown"
 
+
         item = {
             "score": original_score,
             "boosted_score": boosted_score,
             "repo": payload.get("repo"),
             "relative_path": relative_path,
             "language": payload.get("language"),
+            "category": payload.get("category", "code"),
+            "symbol_type": payload.get("symbol_type", "text_chunk"),
+            "symbol_name": payload.get("symbol_name"),
+            "symbol_subchunk_index": payload.get("symbol_subchunk_index", 0),
             "chunk_index": payload.get("chunk_index"),
             "text": payload.get("text"),
         }
+
 
         if relative_path not in file_chunks:
             file_chunks[relative_path] = []
@@ -230,13 +271,18 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
             "expanded_query": expanded_query,
             "repo": repo,
             "raw_count": len(results.points),
-            "selected_count": len(selected),
+            "selected_count": len(selected),            
             "selected": [
                 {
                     "score": x["score"],
                     "boosted_score": x["boosted_score"],
                     "repo": x["repo"],
                     "relative_path": x["relative_path"],
+                    "language": x.get("language"),
+                    "category": x.get("category"),
+                    "symbol_type": x.get("symbol_type"),
+                    "symbol_name": x.get("symbol_name"),
+                    "symbol_subchunk_index": x.get("symbol_subchunk_index"),
                     "chunk_index": x["chunk_index"],
                 }
                 for x in selected
@@ -263,6 +309,10 @@ def build_code_context(chunks: List[Dict[str, Any]]) -> str:
 Repo: {item.get("repo")}
 File: {item.get("relative_path")}
 Language: {item.get("language")}
+Category: {item.get("category")}
+Symbol Type: {item.get("symbol_type")}
+Symbol Name: {item.get("symbol_name")}
+Symbol Subchunk: {item.get("symbol_subchunk_index")}
 Chunk: {item.get("chunk_index")}
 Score: {round(float(item.get("score") or 0), 4)}
 Boosted Score: {round(float(item.get("boosted_score") or 0), 4)}
@@ -285,8 +335,10 @@ You are a private repo-aware coding agent running inside VS Code through Continu
 
 You have access to retrieved project code chunks from Qdrant.
 
+
 Rules:
 - Use the retrieved code context first.
+- Use Symbol Type and Symbol Name to identify relevant functions, classes, components, routes, or documentation sections.
 - Do not invent files, functions, APIs, or project structure.
 - If context is insufficient, clearly say what extra file or context is needed.
 - Prefer minimal, safe, maintainable code changes.
