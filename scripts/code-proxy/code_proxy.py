@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
+from functools import lru_cache
 
 
 
@@ -201,7 +202,7 @@ def boost_score(score: float, payload: Dict[str, Any], query: str) -> float:
 
 def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
     expanded_query = expand_query(query)
-    vector = embedder.encode(expanded_query).tolist()
+    vector = embed_query_cached(expanded_query)
 
 
     limit = max(CODE_TOP_K * SEARCH_LIMIT_MULTIPLIER, CODE_TOP_K)
@@ -385,6 +386,10 @@ def call_llm(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -> D
     response.raise_for_status()
     return response.json()
 
+
+@lru_cache(maxsize=256)
+def embed_query_cached(query: str):
+    return embedder.encode(query).tolist()
 
 @app.get("/v1/models")
 def models():
