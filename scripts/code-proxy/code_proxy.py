@@ -168,6 +168,7 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
     expanded_query = expand_query(query)
     vector = embedder.encode(expanded_query).tolist()
 
+<<<<<<< HEAD
     limit = max(CODE_TOP_K * SEARCH_LIMIT_MULTIPLIER, CODE_TOP_K)
 
     results = client.query_points(
@@ -179,6 +180,8 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
     )
 
     file_chunks = OrderedDict()
+
+    for result in results.points:
 
     for result in results.points:
         payload = result.payload or {}
