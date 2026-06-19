@@ -10,7 +10,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
-    # RESOURCE TUNING: Fast indexed vector searches without hogging resources
     deploy:
       resources:
         limits:
@@ -26,6 +25,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.memory-proxy
     container_name: memory-proxy
+    userns_mode: "keep-id" # Critical for Podman user volume mapping
     env_file:
       - scripts/memory-proxy/memory-api.env
     ports:
@@ -36,7 +36,6 @@ services:
       - memory_logs:/logs/memory
       - ${HOME}/ai-stack/memory/engineering-memory:/memory/engineering-memory:ro
     restart: unless-stopped
-    # RESOURCE TUNING: Standard background context loading
     deploy:
       resources:
         limits:
@@ -52,6 +51,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.code-proxy
     container_name: code-proxy
+    userns_mode: "keep-id" # Critical for Podman user volume mapping
     env_file:
       - scripts/code-proxy/code-proxy.env
     ports:
@@ -62,7 +62,6 @@ services:
       - code_logs:/logs/code
       - ${HOME}/ai-stack/memory/code-memory:/memory/code-memory:ro
     restart: unless-stopped
-    # RESOURCE TUNING: Main worker handling active token requests and embedding calculations
     deploy:
       resources:
         limits:
@@ -72,7 +71,47 @@ services:
           cpus: '8'
           memory: 10gb
 
+  vm-llama:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: vm-llama
+    ports:
+      - "8082:8082" # Accessible on your VM host at port 8082
+    volumes:
+      - ${HOME}/ai-stack/models:/models:ro
+    command: [
+      "-m", "/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "--host", "0.0.0.0",
+      "--port", "8082", # Internal port the application listens on
+      "-c", "8192",
+      "-b", "1024",
+      "-ub", "512",
+      "-t", "24",
+      "--cache-type-k", "q8_0",
+      "--cache-type-v", "q8_0"
+    ]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '24'
+          memory: 24gb
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "8080:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4gb
+
 volumes:
   qdrant_data:
   memory_logs:
   code_logs:
+  open_webui_data:
