@@ -1,22 +1,24 @@
-# docker-compose.yml  –  Master: runs Qdrant + memory-proxy + code-proxy together
-#
-# Usage:
-#   docker compose up -d                  # start everything
-#   docker compose down                   # stop everything
-#   docker compose logs -f                # tail all logs
-
 version: "3.9"
 
 services:
 
   qdrant:
-    image: qdrant/qdrant
+    image: qdrant/qdrant:latest
     container_name: qdrant
     ports:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
+    # RESOURCE TUNING: Fast indexed vector searches without hogging resources
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 10gb
+        reservations:
+          cpus: '4'
+          memory: 4gb
 
   memory-proxy:
     image: ai-stack/memory-proxy
@@ -34,6 +36,15 @@ services:
       - memory_logs:/logs/memory
       - ${HOME}/ai-stack/memory/engineering-memory:/memory/engineering-memory:ro
     restart: unless-stopped
+    # RESOURCE TUNING: Standard background context loading
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 12gb
+        reservations:
+          cpus: '4'
+          memory: 6gb
 
   code-proxy:
     image: ai-stack/code-proxy
@@ -51,6 +62,15 @@ services:
       - code_logs:/logs/code
       - ${HOME}/ai-stack/memory/code-memory:/memory/code-memory:ro
     restart: unless-stopped
+    # RESOURCE TUNING: Main worker handling active token requests and embedding calculations
+    deploy:
+      resources:
+        limits:
+          cpus: '16'
+          memory: 20gb
+        reservations:
+          cpus: '8'
+          memory: 10gb
 
 volumes:
   qdrant_data:

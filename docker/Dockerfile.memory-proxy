@@ -7,9 +7,17 @@
 FROM ai-stack/base-deps
 WORKDIR /app
 
+# CPU core thread throttling for high-core environments
+ENV OMP_NUM_THREADS=4
+ENV MKL_NUM_THREADS=4
+
 # Copy memory-proxy source files only
 COPY --chown=appuser:appuser scripts/memory-proxy/memory_api.py ./memory_api.py
 COPY --chown=appuser:appuser scripts/memory-proxy/memory-api.env ./memory-api.env
 
+# Switch to the non-root execution user
+USER appuser
+# Expose your targeted service port
 EXPOSE 9002
-CMD ["uvicorn", "memory_api:app", "--host", "0.0.0.0", "--port", "9002"]
+
+CMD ["uvicorn", "memory_api:app", "--host", "0.0.0.0", "--port", "9002", "--workers", "4"]

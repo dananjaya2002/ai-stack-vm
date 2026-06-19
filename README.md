@@ -54,7 +54,7 @@ Response → Open WebUI / Continue.dev
 ## Port Reference
 
 | Service           | Port  | Notes                              |
-|-------------------|-------|------------------------------------|
+|-------------------|-------|-------------------------------------|
 | laptop-llama      | 8081  | GPU fast coder (3B)                |
 | vm-llama          | 8082  | VM deep coder (7B)                 |
 | Qdrant REST       | 6333  | Vector database                    |
@@ -88,24 +88,47 @@ git clone <repo-url> ~/ai-stack/repos/ai-stack-vm
 ### 2. Copy env files and fill in values
 
 ```bash
-cp scripts/.example.memory-api.env scripts/memory-api.env
-cp scripts/.example.code-proxy.env scripts/code-proxy.env
+cp scripts/memory-proxy/.example.memory-api.env scripts/memory-proxy/memory-api.env
+cp scripts/code-proxy/.example.code-proxy.env scripts/code-proxy/code-proxy.env
+cp scripts/watcher/.example.watcher.env scripts/watcher/watcher.env
 # Edit each file with real values (LLM_BASE_URL, Qdrant settings, etc.)
-nano scripts/memory-api.env
-nano scripts/code-proxy.env
+nano scripts/memory-proxy/memory-api.env
+nano scripts/code-proxy/code-proxy.env
+nano scripts/watcher/watcher.env
 ```
 
 ### 3. Build Docker images
 
+Images are built in layers. Build the shared base images first, then the service images on top.
+
 ```bash
-# Build shared base image first
+# ── Proxy images ──────────────────────────────────────────
+# 1. Shared base (Python deps + embedding model pre-downloaded)
 docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
 
-# Build memory-proxy image
+# 2. memory-proxy  (port 9002)
 docker build -f docker/Dockerfile.memory-proxy -t ai-stack/memory-proxy .
 
-# Build code-proxy image
+# 3. code-proxy    (port 9001)
 docker build -f docker/Dockerfile.code-proxy -t ai-stack/code-proxy .
+
+# ── Watcher images ────────────────────────────────────────
+# 4. Watcher base (lightweight watchdog deps)
+docker build -f docker/Dockerfile.watcher-base -t ai-stack/watcher-deps .
+
+# 5. Watcher service (file-system watcher that auto-indexes code)
+docker build -f docker/Dockerfile.watcher -t ai-stack/watcher .
+```
+
+#### Docker image hierarchy
+
+```
+python:3.11-slim
+├── ai-stack/base-deps        (Dockerfile.base)
+│   ├── ai-stack/memory-proxy (Dockerfile.memory-proxy)
+│   └── ai-stack/code-proxy   (Dockerfile.code-proxy)
+└── ai-stack/watcher-deps     (Dockerfile.watcher-base)
+    └── ai-stack/watcher      (Dockerfile.watcher)
 ```
 
 ---
@@ -134,6 +157,18 @@ docker compose -f docker-compose.memory-proxy.yml up -d
 # Qdrant + code-proxy only
 docker compose -f docker-compose.code-proxy.yml up -d
 ```
+
+### Resource limits (master compose)
+
+Each service in `docker-compose.yml` has explicit CPU and memory limits tuned for the VM:
+
+| Service      | CPU limit | Memory limit | CPU request | Memory request |
+|--------------|-----------|--------------|-------------|----------------|
+| qdrant       | 8 cores   | 10 GB        | 4 cores     | 4 GB           |
+| memory-proxy | 8 cores   | 12 GB        | 4 cores     | 6 GB           |
+| code-proxy   | 16 cores  | 20 GB        | 8 cores     | 10 GB          |
+
+> ℹ️ `requests` are soft reservations; `limits` are hard caps enforced by the container runtime.
 
 ### vm-llama (Podman on VM)
 
@@ -245,24 +280,35 @@ git clone <project-url> ~/ai-stack/memory/code-memory/<repo-name>
 rsync -av /path/to/local/project/ vm-host:~/ai-stack/memory/code-memory/<repo-name>/
 
 # Then index it into Qdrant
-python scripts/code-proxy/index_code.py ~/ai-stack/memory/code-memory/<repo-name>
+python scripts/watcher/index_code.py ~/ai-stack/memory/code-memory/<repo-name>
 ```
 
 ### Index a specific file
+
 ```bash
-python scripts/code-proxy/index_code.py ~/ai-stack/memory/code-memory/<repo-name>/src/main.py
+python scripts/watcher/index_code.py ~/ai-stack/memory/code-memory/<repo-name>/src/main.py
 ```
 
 ### Search code chunks (debug)
 
 ```bash
-python scripts/code-proxy/search_code.py
+python scripts/watcher/search_code.py
 ```
 
 ### Run code watcher (auto-index on save)
 
 ```bash
-python scripts/code-proxy/watch_code.py ~/ai-stack/memory/code-memory
+# Watches ~/ai-stack/memory/code-memory and re-indexes on any file change
+python scripts/watcher/watch_code.py ~/ai-stack/memory/code-memory
+```
+
+Alternatively, run the watcher as a Docker container:
+
+```bash
+docker run -d --name watcher \
+  --env-file scripts/watcher/watcher.env \
+  -v ~/ai-stack/memory/code-memory:/memory/code-memory:ro \
+  ai-stack/watcher
 ```
 
 ---
@@ -287,7 +333,7 @@ Checks:
 ### View memory-proxy logs
 
 ```bash
-python scripts/view_logs.py
+python scripts/memory-proxy/view_logs.py
 # Reads ~/ai-stack/logs/memory_api.log
 # Offers option to delete after viewing
 ```
@@ -373,40 +419,41 @@ models:
 
 ```
 ai-stack-vm/
-├── code-proxy/              # code-proxy standalone source
-│   ├── code_proxy.py
-│   ├── index_code.py
-│   ├── search_code.py
-│   ├── watch_code.py
-│   ├── Dockerfile
-│   └── .example.code-proxy.env
-├── docker/                  # Dockerfiles for VM containers
-│   ├── Dockerfile.base
-│   ├── Dockerfile.memory-proxy
-│   └── Dockerfile.code-proxy
-├── scripts/                 # All Python scripts + env examples
-│   ├── memory_api.py
-│   ├── code_proxy.py
-│   ├── index_memory.py
-│   ├── index_code.py
-│   ├── search_memory.py
-│   ├── watch_memory.py
-│   ├── watch_code.py
-│   ├── ask_with_memory.py
-│   ├── view_logs.py
-│   ├── ask.sh
-│   ├── .example.memory-api.env
-│   └── .example.code-proxy.env
+├── docker/                          # All Dockerfiles
+│   ├── Dockerfile.base              # Shared proxy base (Python deps + embeddings)
+│   ├── Dockerfile.memory-proxy      # memory-proxy service image
+│   ├── Dockerfile.code-proxy        # code-proxy service image
+│   ├── Dockerfile.watcher-base      # Shared watcher base (watchdog deps)
+│   └── Dockerfile.watcher           # Watcher service image (auto-indexer)
+├── scripts/                         # Python scripts organised by service
+│   ├── memory-proxy/
+│   │   ├── memory_api.py            # FastAPI memory-proxy server
+│   │   ├── index_memory.py          # Manual indexer for engineering-memory
+│   │   ├── search_memory.py         # Debug search against memory collection
+│   │   ├── watch_memory.py          # File-system watcher (memory auto-index)
+│   │   ├── ask_with_memory.py       # CLI RAG query against memory
+│   │   ├── view_logs.py             # Log viewer / cleaner
+│   │   └── .example.memory-api.env # Env file template
+│   ├── code-proxy/
+│   │   ├── code_proxy.py            # FastAPI code-proxy server
+│   │   ├── search_code.py           # Debug search against code collection
+│   │   └── .example.code-proxy.env # Env file template
+│   └── watcher/
+│       ├── watch_code.py            # File-system watcher (code auto-index)
+│       ├── index_code.py            # Manual indexer for code-memory repos
+│       ├── search_code.py           # Debug search helper
+│       ├── requirements.txt         # Watcher-specific Python deps
+│       └── .example.watcher.env    # Env file template
 ├── docs/
 │   ├── ports.md
 │   ├── migration-v2.md
 │   └── project-phase-1.md
-├── docker-compose.yml               # Master: all services
+├── docker-compose.yml               # Master: all services (with resource limits)
 ├── docker-compose.memory-proxy.yml  # Memory-proxy + Qdrant only
 ├── docker-compose.code-proxy.yml    # Code-proxy + Qdrant only
 ├── health-check.sh
 ├── backup-ai-stack.sh
-└── requirements.txt
+└── requirements.txt                 # Shared Python deps (used by Dockerfile.base)
 ```
 
 ---
