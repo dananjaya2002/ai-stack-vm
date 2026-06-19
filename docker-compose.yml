@@ -27,7 +27,7 @@ services:
       dockerfile: docker/Dockerfile.memory-proxy
     container_name: memory-proxy
     env_file:
-      - scripts/memory-proxy/.example.memory-api.env
+      - scripts/memory-proxy/memory-api.env
     ports:
       - "9002:9002"
     depends_on:
@@ -53,7 +53,7 @@ services:
       dockerfile: docker/Dockerfile.code-proxy
     container_name: code-proxy
     env_file:
-      - scripts/code-proxy/.example.code-proxy.env
+      - scripts/code-proxy/code-proxy.env
     ports:
       - "9001:9001"
     depends_on:
