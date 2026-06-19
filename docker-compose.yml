@@ -33,7 +33,7 @@ services:
       - qdrant
     volumes:
       - memory_logs:/logs/memory
-      - ${HOME}/ai-stack/memory/engineering-memory:/memory/engineering-memory:ro
+      - ${HOME}/ai-stack/memory/engineering-memory:/memory:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -58,7 +58,7 @@ services:
       - qdrant
     volumes:
       - code_logs:/logs/code
-      - ${HOME}/ai-stack/memory/code-memory:/memory/code-memory:ro
+      - ${HOME}/ai-stack/memory/code-memory:/code-memory:ro
     restart: unless-stopped
     deploy:
       resources:
