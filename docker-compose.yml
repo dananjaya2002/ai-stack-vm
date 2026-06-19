@@ -14,10 +14,10 @@ services:
       resources:
         limits:
           cpus: '8'
-          memory: 10gb
+          memory: 8gb
         reservations:
           cpus: '4'
-          memory: 4gb
+          memory: 2gb
 
   memory-proxy:
     image: ai-stack/memory-proxy
@@ -38,11 +38,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '8'
-          memory: 12gb
+          cpus: '6'
+          memory: 4gb
         reservations:
-          cpus: '4'
-          memory: 6gb
+          cpus: '2'
+          memory: 2gb
 
   code-proxy:
     image: ai-stack/code-proxy
@@ -63,11 +63,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '16'
-          memory: 20gb
+          cpus: '12'
+          memory: 4gb
         reservations:
-          cpus: '8'
-          memory: 10gb
+          cpus: '4'
+          memory: 2gb
 
   vm-llama:
     image: ghcr.io/ggml-org/llama.cpp:server
@@ -77,13 +77,13 @@ services:
     volumes:
       - ${HOME}/ai-stack/models:/models:ro
     command: [
-      "-m", "/models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+      "-m", "/models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
       "--host", "0.0.0.0",
       "--port", "8082", # Internal port the application listens on
-      "-c", "8192",
+      "-c", "12288",
       "-b", "1024",
       "-ub", "512",
-      "-t", "24",
+      "-t", "30",
       "--cache-type-k", "q8_0",
       "--cache-type-v", "q8_0"
     ]
@@ -91,6 +91,9 @@ services:
     deploy:
       resources:
         limits:
+          cpus: '32'          # Allows utilization of full physical core block + overhead
+          memory: 38gb        # Secure ceiling for Qwen 3.6 35B file data + KV slots
+        reservations:
           cpus: '24'
           memory: 24gb
 
@@ -106,7 +109,10 @@ services:
       resources:
         limits:
           cpus: '4'
-          memory: 4gb
+          memory: 3gb         # Dropped slightly to leave an un-allocatable host OS buffer
+        reservations:
+          cpus: '2'
+          memory: 2gb
 
 volumes:
   qdrant_data:
