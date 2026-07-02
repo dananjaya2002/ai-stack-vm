@@ -1,0 +1,13 @@
+.git
+.agents
+.codex
+models
+qdrant
+memory
+open-webui
+python-envs
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+scripts/*/*.env

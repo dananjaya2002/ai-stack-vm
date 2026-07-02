@@ -4,8 +4,7 @@
 #   docker compose -f docker-compose.code-proxy.yml up -d
 #   docker compose -f docker-compose.code-proxy.yml down
 #   docker compose -f docker-compose.code-proxy.yml logs -f
-
-version: "3.9"
+# On Linux/macOS, set USERPROFILE=$HOME before running if USERPROFILE is unset.
 
 services:
 
@@ -32,7 +31,9 @@ services:
       - qdrant
     volumes:
       - code_logs:/logs/code
-      - ${HOME}/ai-stack/memory/code-memory:/memory/code-memory:ro
+      - ${USERPROFILE}/ai-stack/memory/code-memory:/code-memory:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:
