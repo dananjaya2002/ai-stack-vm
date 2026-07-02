@@ -11,10 +11,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '8'
-          memory: 8gb
+          cpus: '6'
+          memory: 6gb
         reservations:
-          cpus: '4'
+          cpus: '2'
           memory: 2gb
 
   memory-proxy:
@@ -36,10 +36,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '6'
+          cpus: '4'
           memory: 4gb
         reservations:
-          cpus: '2'
+          cpus: '1'
           memory: 2gb
 
   code-proxy:
@@ -61,10 +61,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '12'
+          cpus: '6'
           memory: 4gb
         reservations:
-          cpus: '4'
+          cpus: '2'
           memory: 2gb
 
   vm-llama:
@@ -90,10 +90,10 @@ services:
       resources:
         limits:
           cpus: "${LLAMA_CPU_LIMIT:-8}"
-          memory: "${LLAMA_MEMORY_LIMIT:-12gb}"
+          memory: "${LLAMA_MEMORY_LIMIT:-14gb}"
         reservations:
           cpus: "${LLAMA_CPU_RESERVATION:-4}"
-          memory: "${LLAMA_MEMORY_RESERVATION:-6gb}"
+          memory: "${LLAMA_MEMORY_RESERVATION:-8gb}"
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -106,11 +106,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
+          cpus: '2'
           memory: 3gb         # Dropped slightly to leave an un-allocatable host OS buffer
         reservations:
-          cpus: '2'
-          memory: 2gb
+          cpus: '1'
+          memory: 1gb
 
 volumes:
   qdrant_data:
