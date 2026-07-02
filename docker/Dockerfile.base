@@ -1,7 +1,7 @@
 # docker/Dockerfile.base – Shared dependency image
 # Build first with:  docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
 #
-FROM python:3.11-slim
+FROM docker.io/library/python:3.11-slim
 WORKDIR /app
 
 # 1. Install system build tools needed for some wheels (gcc, etc.)

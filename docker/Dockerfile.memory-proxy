@@ -13,7 +13,6 @@ ENV MKL_NUM_THREADS=4
 
 # Copy memory-proxy source files only
 COPY --chown=appuser:appuser scripts/memory-proxy/memory_api.py ./memory_api.py
-COPY --chown=appuser:appuser scripts/memory-proxy/memory-api.env ./memory-api.env
 
 # Switch to the non-root execution user
 USER appuser

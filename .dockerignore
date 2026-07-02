@@ -10,4 +10,3 @@ python-envs
 **/*.pyc
 **/*.pyo
 **/*.pyd
-scripts/*/*.env
