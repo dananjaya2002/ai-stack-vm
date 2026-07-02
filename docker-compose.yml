@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   qdrant:
@@ -33,7 +31,7 @@ services:
       - qdrant
     volumes:
       - memory_logs:/logs/memory
-      - ${HOME}/ai-stack/memory/engineering-memory:/memory:ro
+      - ${AI_STACK_HOME}/memory/engineering-memory:/memory:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -58,7 +56,7 @@ services:
       - qdrant
     volumes:
       - code_logs:/logs/code
-      - ${HOME}/ai-stack/memory/code-memory:/code-memory:ro
+      - ${AI_STACK_HOME}/memory/code-memory:/code-memory:ro
     restart: unless-stopped
     deploy:
       resources:
@@ -75,15 +73,15 @@ services:
     ports:
       - "8082:8082" # Accessible on your VM host at port 8082
     volumes:
-      - ${HOME}/ai-stack/models:/models:ro
+      - ${AI_STACK_HOME}/models:/models:ro
     command: [
-      "-m", "/models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+      "-m", "/models/${MODEL_FILE:-Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf}",
       "--host", "0.0.0.0",
       "--port", "8082", # Internal port the application listens on
-      "-c", "12288",
-      "-b", "2048",
-      "-ub", "1024",
-      "-t", "30",
+      "-c", "${LLAMA_CONTEXT:-8192}",
+      "-b", "${LLAMA_BATCH:-512}",
+      "-ub", "${LLAMA_UBATCH:-256}",
+      "-t", "${LLAMA_THREADS:-6}",
       "--cache-type-k", "q8_0",
       "--cache-type-v", "q8_0"
     ]
@@ -91,11 +89,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '54'           # EXPANDED: Gives the threads maximum execution breathing room!
-          memory: 38gb        
+          cpus: "${LLAMA_CPU_LIMIT:-8}"
+          memory: "${LLAMA_MEMORY_LIMIT:-12gb}"
         reservations:
-          cpus: '30'
-          memory: 24gb
+          cpus: "${LLAMA_CPU_RESERVATION:-4}"
+          memory: "${LLAMA_MEMORY_RESERVATION:-6gb}"
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main

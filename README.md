@@ -74,6 +74,45 @@ Response → Open WebUI / Continue.dev
 
 ---
 
+## CLI Quick Start
+
+For a personal laptop-class machine, such as 12 cores, 16 GB RAM, and 6 GB VRAM, the repo CLI defaults to `Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf`.
+
+```bash
+git clone <repo-url> ai-stack-vm
+cd ai-stack-vm
+chmod +x ./ai-stack
+
+./ai-stack doctor
+./ai-stack init
+./ai-stack profile laptop
+./ai-stack model download
+./ai-stack build
+./ai-stack up
+./ai-stack status
+```
+
+For the larger 60-core / 40 GB RAM VM profile:
+
+```bash
+./ai-stack profile vm60
+# Edit MODEL_URL in .env for the larger GGUF before downloading.
+./ai-stack model download
+./ai-stack build
+./ai-stack up
+```
+
+Useful daily commands:
+
+```bash
+./ai-stack logs llama
+./ai-stack logs code
+./ai-stack down
+./ai-stack restart
+```
+
+---
+
 ## Setup
 
 ### 1. Clone and prepare folders (on VM)

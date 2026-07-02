@@ -1,0 +1,555 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
+DEFAULT_MODEL_FILE="Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
+DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
+VM60_MODEL_FILE="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+
+usage() {
+  cat <<'USAGE'
+ai-stack - local AI stack VM helper
+
+Usage:
+  ./ai-stack doctor
+  ./ai-stack init
+  ./ai-stack profile laptop|vm60
+  ./ai-stack model list
+  ./ai-stack model path
+  ./ai-stack model use <file.gguf>
+  ./ai-stack model download [url]
+  ./ai-stack build
+  ./ai-stack up
+  ./ai-stack down
+  ./ai-stack restart
+  ./ai-stack status
+  ./ai-stack logs [llama|qdrant|code|memory|webui|all]
+  ./ai-stack index memory
+  ./ai-stack index code <repo-path>
+  ./ai-stack search code "query"
+  ./ai-stack search memory "query"
+
+First run:
+  ./ai-stack doctor
+  ./ai-stack init
+  ./ai-stack model download
+  ./ai-stack build
+  ./ai-stack up
+  ./ai-stack status
+USAGE
+}
+
+info() {
+  printf '[ai-stack] %s\n' "$*"
+}
+
+warn() {
+  printf '[ai-stack] warning: %s\n' "$*" >&2
+}
+
+fail() {
+  printf '[ai-stack] error: %s\n' "$*" >&2
+  exit 1
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+compose() {
+  if have docker && docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  elif have docker-compose; then
+    docker-compose "$@"
+  else
+    fail "Docker Compose was not found. Install Docker with the Compose plugin."
+  fi
+}
+
+load_env() {
+  local model_url_was_set=0
+  if [[ -f "${ENV_FILE}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${ENV_FILE}"
+    set +a
+    if [[ ${MODEL_URL+x} ]]; then
+      model_url_was_set=1
+    fi
+  fi
+
+  AI_STACK_HOME="${AI_STACK_HOME:-${HOME}/ai-stack}"
+  MODEL_FILE="${MODEL_FILE:-${DEFAULT_MODEL_FILE}}"
+  if (( model_url_was_set == 0 )); then
+    MODEL_URL="${DEFAULT_MODEL_URL}"
+  else
+    MODEL_URL="${MODEL_URL:-}"
+  fi
+  MODEL_SHA256="${MODEL_SHA256:-}"
+  LLAMA_THREADS="${LLAMA_THREADS:-6}"
+  LLAMA_CONTEXT="${LLAMA_CONTEXT:-8192}"
+  LLAMA_BATCH="${LLAMA_BATCH:-512}"
+  LLAMA_UBATCH="${LLAMA_UBATCH:-256}"
+}
+
+set_env_var() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  touch "${ENV_FILE}"
+  tmp="$(mktemp)"
+  awk -v key="${key}" -v value="${value}" '
+    BEGIN { done = 0 }
+    $0 ~ "^" key "=" {
+      print key "=" value
+      done = 1
+      next
+    }
+    { print }
+    END {
+      if (!done) {
+        print key "=" value
+      }
+    }
+  ' "${ENV_FILE}" > "${tmp}"
+  mv "${tmp}" "${ENV_FILE}"
+}
+
+cpu_count() {
+  if have nproc; then
+    nproc
+  else
+    getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1'
+  fi
+}
+
+memory_gb() {
+  if [[ -r /proc/meminfo ]]; then
+    awk '/MemTotal/ { printf "%.0f", $2 / 1024 / 1024 }' /proc/meminfo
+  else
+    printf '0'
+  fi
+}
+
+default_threads() {
+  local cpus="$1"
+  local threads
+  threads=$((cpus - 6))
+  if (( threads < 1 )); then
+    threads=1
+  fi
+  if (( threads > 54 )); then
+    threads=54
+  fi
+  printf '%s' "${threads}"
+}
+
+default_memory_limit() {
+  local mem="$1"
+  if (( mem >= 36 )); then
+    printf '30gb'
+  elif (( mem >= 24 )); then
+    printf '18gb'
+  else
+    printf '12gb'
+  fi
+}
+
+default_memory_reservation() {
+  local mem="$1"
+  if (( mem >= 36 )); then
+    printf '16gb'
+  elif (( mem >= 24 )); then
+    printf '10gb'
+  else
+    printf '6gb'
+  fi
+}
+
+port_status() {
+  local port="$1"
+  if have ss; then
+    if ss -ltn "( sport = :${port} )" | grep -q ":${port}"; then
+      printf 'busy'
+    else
+      printf 'free'
+    fi
+  elif have lsof; then
+    if lsof -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+      printf 'busy'
+    else
+      printf 'free'
+    fi
+  else
+    printf 'unknown'
+  fi
+}
+
+cmd_doctor() {
+  local cpus mem
+  cpus="$(cpu_count)"
+  mem="$(memory_gb)"
+
+  info "host: $(uname -srm)"
+  info "cpu cores: ${cpus}"
+  info "memory: ${mem} GB"
+
+  if (( cpus < 16 )); then
+    warn "this stack is tuned for a larger VM; detected ${cpus} cores"
+  fi
+  if (( mem < 32 )); then
+    warn "40 GB RAM is recommended for the default model; detected ${mem} GB"
+  fi
+
+  for bin in git curl awk; do
+    if have "${bin}"; then
+      info "${bin}: ok"
+    else
+      warn "${bin}: missing"
+    fi
+  done
+
+  if have docker; then
+    info "docker: $(docker --version)"
+  else
+    warn "docker: missing"
+  fi
+
+  if have docker && docker compose version >/dev/null 2>&1; then
+    info "docker compose: $(docker compose version)"
+  elif have docker-compose; then
+    info "docker-compose: $(docker-compose --version)"
+  else
+    warn "docker compose: missing"
+  fi
+
+  for port in 6333 8080 8082 9001 9002; do
+    info "port ${port}: $(port_status "${port}")"
+  done
+
+  load_env
+  if [[ -f "${AI_STACK_HOME}/models/${MODEL_FILE}" ]]; then
+    info "model: ${AI_STACK_HOME}/models/${MODEL_FILE}"
+  else
+    warn "model missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"
+  fi
+}
+
+write_root_env() {
+  local cpus mem threads cpu_limit memory_limit memory_reservation home_dir
+  cpus="$(cpu_count)"
+  mem="$(memory_gb)"
+  threads="$(default_threads "${cpus}")"
+  cpu_limit=$((threads + 2))
+  if (( cpu_limit > cpus )); then
+    cpu_limit="${cpus}"
+  fi
+  memory_limit="$(default_memory_limit "${mem}")"
+  memory_reservation="$(default_memory_reservation "${mem}")"
+  home_dir="${HOME}/ai-stack"
+
+  if [[ -f "${ENV_FILE}" ]]; then
+    info ".env already exists"
+    return
+  fi
+
+  cat > "${ENV_FILE}" <<EOF
+AI_STACK_HOME=${home_dir}
+MODEL_FILE=${DEFAULT_MODEL_FILE}
+MODEL_URL=${DEFAULT_MODEL_URL}
+MODEL_SHA256=
+
+LLAMA_THREADS=${threads}
+LLAMA_CONTEXT=8192
+LLAMA_BATCH=512
+LLAMA_UBATCH=256
+LLAMA_CPU_LIMIT=${cpu_limit}
+LLAMA_MEMORY_LIMIT=${memory_limit}
+LLAMA_CPU_RESERVATION=4
+LLAMA_MEMORY_RESERVATION=${memory_reservation}
+EOF
+  info "created .env"
+}
+
+cmd_profile() {
+  local profile="${1:-}"
+  [[ -n "${profile}" ]] || fail "usage: ./ai-stack profile laptop|vm60"
+  cmd_init
+
+  case "${profile}" in
+    laptop)
+      set_env_var MODEL_FILE "${DEFAULT_MODEL_FILE}"
+      set_env_var MODEL_URL "${DEFAULT_MODEL_URL}"
+      set_env_var MODEL_SHA256 ""
+      set_env_var LLAMA_THREADS "6"
+      set_env_var LLAMA_CONTEXT "8192"
+      set_env_var LLAMA_BATCH "512"
+      set_env_var LLAMA_UBATCH "256"
+      set_env_var LLAMA_CPU_LIMIT "8"
+      set_env_var LLAMA_MEMORY_LIMIT "12gb"
+      set_env_var LLAMA_CPU_RESERVATION "4"
+      set_env_var LLAMA_MEMORY_RESERVATION "6gb"
+      info "applied laptop profile for 12 cores / 16 GB RAM"
+      ;;
+    vm60)
+      set_env_var MODEL_FILE "${VM60_MODEL_FILE}"
+      set_env_var MODEL_URL ""
+      set_env_var MODEL_SHA256 ""
+      set_env_var LLAMA_THREADS "54"
+      set_env_var LLAMA_CONTEXT "12288"
+      set_env_var LLAMA_BATCH "2048"
+      set_env_var LLAMA_UBATCH "1024"
+      set_env_var LLAMA_CPU_LIMIT "54"
+      set_env_var LLAMA_MEMORY_LIMIT "38gb"
+      set_env_var LLAMA_CPU_RESERVATION "30"
+      set_env_var LLAMA_MEMORY_RESERVATION "24gb"
+      info "applied vm60 profile; set MODEL_URL before downloading the larger model"
+      ;;
+    *)
+      fail "usage: ./ai-stack profile laptop|vm60"
+      ;;
+  esac
+}
+
+write_proxy_envs() {
+  mkdir -p "${ROOT_DIR}/scripts/code-proxy" "${ROOT_DIR}/scripts/memory-proxy"
+
+  if [[ ! -f "${ROOT_DIR}/scripts/code-proxy/code-proxy.env" ]]; then
+    cat > "${ROOT_DIR}/scripts/code-proxy/code-proxy.env" <<'EOF'
+CODE_PROXY_LOGS=true
+CODE_PROXY_LOG_FILE=/logs/code-proxy/code_proxy.log
+
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
+QDRANT_COLLECTION=code-memory
+
+LLM_BASE_URL=http://vm-llama:8082/v1
+LLM_MODEL=qwen2.5-coder-3b-instruct
+
+CODE_TOP_K=8
+SEARCH_LIMIT_MULTIPLIER=4
+CODE_SCORE_THRESHOLD=0.25
+MAX_CHUNKS_PER_FILE=2
+MAX_TEXT_PREVIEW_CHARS=1200
+REPOS_ROOT=/code-memory
+EOF
+    info "created scripts/code-proxy/code-proxy.env"
+  else
+    info "scripts/code-proxy/code-proxy.env already exists"
+  fi
+
+  if [[ ! -f "${ROOT_DIR}/scripts/memory-proxy/memory-api.env" ]]; then
+    cat > "${ROOT_DIR}/scripts/memory-proxy/memory-api.env" <<'EOF'
+MEMORY_API_LOGS=false
+MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
+
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
+QDRANT_COLLECTION=engineering-memory
+
+LLM_BASE_URL=http://vm-llama:8082/v1
+LLM_MODEL=qwen2.5-coder-3b-instruct
+
+MEMORY_TOP_K=5
+MEMORY_SCORE_THRESHOLD=0.5
+HF_TOKEN=
+EOF
+    info "created scripts/memory-proxy/memory-api.env"
+  else
+    info "scripts/memory-proxy/memory-api.env already exists"
+  fi
+}
+
+cmd_init() {
+  write_root_env
+  load_env
+  mkdir -p \
+    "${AI_STACK_HOME}/models" \
+    "${AI_STACK_HOME}/memory/code-memory" \
+    "${AI_STACK_HOME}/memory/engineering-memory"
+  info "created runtime directories under ${AI_STACK_HOME}"
+  write_proxy_envs
+  info "init complete"
+}
+
+model_dir() {
+  load_env
+  printf '%s/models' "${AI_STACK_HOME}"
+}
+
+cmd_model_list() {
+  local dir
+  dir="$(model_dir)"
+  mkdir -p "${dir}"
+  find "${dir}" -maxdepth 1 -type f -name '*.gguf' -printf '%f\n' | sort
+}
+
+cmd_model_path() {
+  load_env
+  printf '%s\n' "${AI_STACK_HOME}/models/${MODEL_FILE}"
+}
+
+cmd_model_use() {
+  local file="${1:-}"
+  [[ -n "${file}" ]] || fail "usage: ./ai-stack model use <file.gguf>"
+  set_env_var MODEL_FILE "$(basename "${file}")"
+  info "MODEL_FILE=$(basename "${file}")"
+}
+
+cmd_model_download() {
+  local url="${1:-}"
+  local dir file dest
+  cmd_init
+  load_env
+
+  if [[ -z "${url}" ]]; then
+    url="${MODEL_URL}"
+  fi
+  [[ -n "${url}" ]] || fail "set MODEL_URL in .env or run: ./ai-stack model download <url>"
+  have curl || fail "curl is required to download models"
+
+  dir="${AI_STACK_HOME}/models"
+  mkdir -p "${dir}"
+
+  file="${MODEL_FILE}"
+  if [[ "${file}" == "${DEFAULT_MODEL_FILE}" && "${url}" == *".gguf"* ]]; then
+    file="$(basename "${url%%\?*}")"
+    set_env_var MODEL_FILE "${file}"
+  fi
+
+  if [[ "${MODEL_URL}" != "${url}" ]]; then
+    set_env_var MODEL_URL "${url}"
+  fi
+
+  dest="${dir}/${file}"
+  info "downloading model to ${dest}"
+  curl --fail --location --continue-at - --output "${dest}" "${url}"
+
+  load_env
+  if [[ -n "${MODEL_SHA256}" ]]; then
+    printf '%s  %s\n' "${MODEL_SHA256}" "${dest}" | sha256sum -c -
+  fi
+  info "model ready: ${dest}"
+}
+
+cmd_build() {
+  cmd_init
+  compose build
+}
+
+cmd_up() {
+  cmd_init
+  load_env
+  if [[ ! -f "${AI_STACK_HOME}/models/${MODEL_FILE}" ]]; then
+    warn "model is missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"
+    warn "run ./ai-stack model download before starting vm-llama"
+  fi
+  compose up -d
+}
+
+cmd_down() {
+  compose down
+}
+
+cmd_restart() {
+  compose restart "$@"
+}
+
+cmd_status() {
+  compose ps
+  for endpoint in \
+    "qdrant:http://localhost:6333" \
+    "llama:http://localhost:8082/v1/models" \
+    "code-proxy:http://localhost:9001/v1/models" \
+    "memory-proxy:http://localhost:9002/v1/models"; do
+    local name="${endpoint%%:*}"
+    local url="${endpoint#*:}"
+    if curl --silent --fail --max-time 3 "${url}" >/dev/null; then
+      info "${name}: healthy"
+    else
+      warn "${name}: not responding at ${url}"
+    fi
+  done
+}
+
+cmd_logs() {
+  local target="${1:-all}"
+  case "${target}" in
+    llama) compose logs -f vm-llama ;;
+    qdrant) compose logs -f qdrant ;;
+    code) compose logs -f code-proxy ;;
+    memory) compose logs -f memory-proxy ;;
+    webui) compose logs -f open-webui ;;
+    all) compose logs -f ;;
+    *) fail "unknown log target: ${target}" ;;
+  esac
+}
+
+cmd_index() {
+  local target="${1:-}"
+  shift || true
+  case "${target}" in
+    memory)
+      python3 "${ROOT_DIR}/scripts/memory-proxy/index_memory.py" "$@"
+      ;;
+    code)
+      [[ "${1:-}" ]] || fail "usage: ./ai-stack index code <repo-path>"
+      python3 "${ROOT_DIR}/scripts/watcher/index_code.py" "$@"
+      ;;
+    *)
+      fail "usage: ./ai-stack index memory|code"
+      ;;
+  esac
+}
+
+cmd_search() {
+  local target="${1:-}"
+  shift || true
+  case "${target}" in
+    memory)
+      python3 "${ROOT_DIR}/scripts/memory-proxy/search_memory.py" "$@"
+      ;;
+    code)
+      python3 "${ROOT_DIR}/scripts/code-proxy/search_code.py" "$@"
+      ;;
+    *)
+      fail "usage: ./ai-stack search memory|code \"query\""
+      ;;
+  esac
+}
+
+main() {
+  cd "${ROOT_DIR}"
+  local command="${1:-help}"
+  shift || true
+
+  case "${command}" in
+    help|-h|--help) usage ;;
+    doctor) cmd_doctor "$@" ;;
+    init) cmd_init "$@" ;;
+    profile) cmd_profile "$@" ;;
+    build) cmd_build "$@" ;;
+    up) cmd_up "$@" ;;
+    down) cmd_down "$@" ;;
+    restart) cmd_restart "$@" ;;
+    status) cmd_status "$@" ;;
+    logs) cmd_logs "$@" ;;
+    index) cmd_index "$@" ;;
+    search) cmd_search "$@" ;;
+    model)
+      local sub="${1:-}"
+      shift || true
+      case "${sub}" in
+        list) cmd_model_list "$@" ;;
+        path) cmd_model_path "$@" ;;
+        use) cmd_model_use "$@" ;;
+        download) cmd_model_download "$@" ;;
+        *) fail "usage: ./ai-stack model list|path|use|download" ;;
+      esac
+      ;;
+    *) fail "unknown command: ${command}" ;;
+  esac
+}
+
+main "$@"
