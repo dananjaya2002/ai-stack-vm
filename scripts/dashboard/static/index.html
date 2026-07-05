@@ -34,7 +34,11 @@
             <h2 id="page-title">Overview</h2>
             <p id="page-subtitle">Service health, storage, and system load.</p>
           </div>
-          <button id="refresh-current" class="secondary">Refresh</button>
+          <div class="topbar-actions">
+            <span id="live-indicator" class="live-pill">Live</span>
+            <span id="last-updated" class="muted-text">Waiting for data</span>
+            <button id="refresh-current" class="secondary">Refresh</button>
+          </div>
         </header>
 
         <section id="notice" class="notice hidden"></section>
@@ -42,6 +46,7 @@
         <section class="tab-panel active" id="tab-overview">
           <div class="toolbar">
             <button id="refresh-status">Refresh</button>
+            <span class="muted-text">Updates every 5 seconds.</span>
           </div>
           <div id="status-grid" class="status-grid"></div>
         </section>
@@ -59,6 +64,7 @@
               <input id="log-capture" type="checkbox" />
               <span>Temporary log capture</span>
             </label>
+            <span class="muted-text">Auto-refreshes every 2 seconds.</span>
           </div>
           <pre id="log-output" class="log-output"></pre>
         </section>
@@ -145,6 +151,7 @@
           </form>
           <div class="toolbar">
             <button id="refresh-jobs">Refresh jobs</button>
+            <span class="muted-text">Running jobs update automatically.</span>
           </div>
           <div id="jobs-list" class="jobs-list"></div>
         </section>

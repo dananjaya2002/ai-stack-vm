@@ -357,12 +357,15 @@ http://localhost:9100
 Tabs:
 
 - Overview: llama.cpp, Qdrant, memory folder, log, CPU, RAM, and disk status.
-- Logs: memory/code proxy logs plus dashboard job and watcher output.
+- Logs: memory/code proxy logs plus dashboard job and watcher output, refreshed live.
 - Memory Files: browse engineering and code memory files.
 - Upload: upload engineering memory files or code files/zip archives.
 - Repositories: clone public repos or private HTTPS repos with a one-time Git token.
 - Indexing: start full or targeted indexing jobs.
 - Watchers: start/stop automatic engineering and code reindex watchers.
+
+After rebuilding the dashboard image, hard-refresh the browser if an older UI is
+cached.
 
 Status remains available as JSON:
 

@@ -1,6 +1,8 @@
 const state = {
   currentTab: "overview",
   files: [],
+  poller: null,
+  lastUpdatedAt: null,
 };
 
 const titles = {
@@ -24,6 +26,11 @@ function showNotice(message, type = "info") {
   notice.textContent = message;
   notice.className = `notice ${type}`;
   window.setTimeout(() => notice.classList.add("hidden"), 4500);
+}
+
+function markUpdated() {
+  state.lastUpdatedAt = new Date();
+  document.querySelector("#last-updated").textContent = `Updated ${state.lastUpdatedAt.toLocaleTimeString()}`;
 }
 
 async function api(path, options = {}) {
@@ -66,7 +73,7 @@ function renderStatusCard(title, ok, lines, warning = false) {
   return `
     <article class="status-card">
       <h3>${title} ${badge(ok, warning)}</h3>
-      ${lines.map((line) => `<p>${line}</p>`).join("")}
+      ${lines.map(([label, value]) => `<div class="metric"><span>${label}</span><span>${value}</span></div>`).join("")}
     </article>
   `;
 }
@@ -77,39 +84,44 @@ async function refreshStatus() {
   const speed = data.llama?.approximate_token_speed?.tokens_per_second;
   grid.innerHTML = [
     renderStatusCard("Llama", data.llama.ok, [
-      `Latency: ${data.llama.latency_ms ?? "-"} ms`,
-      `Token speed: ${speed ?? "-"} tok/s`,
-      `Model: ${data.llama.model ?? "-"}`,
+      ["Latency", `${data.llama.latency_ms ?? "-"} ms`],
+      ["Token speed", `${speed ?? "-"} tok/s`],
+      ["Model", data.llama.model ?? "-"],
     ]),
     renderStatusCard("Qdrant", data.qdrant.ok, [
-      `Latency: ${data.qdrant.latency_ms ?? "-"} ms`,
-      `Endpoint: ${data.qdrant.url ?? "-"}`,
+      ["Latency", `${data.qdrant.latency_ms ?? "-"} ms`],
+      ["Endpoint", data.qdrant.url ?? "-"],
     ]),
     renderStatusCard("Engineering Memory", data.memories.engineering.ok, [
-      `Files: ${data.memories.engineering.file_count}`,
-      `Latest: ${data.memories.engineering.latest_modified_time ?? "-"}`,
+      ["Files", data.memories.engineering.file_count],
+      ["Latest", data.memories.engineering.latest_modified_time ?? "-"],
     ]),
     renderStatusCard("Code Memory", data.memories.code.ok, [
-      `Files: ${data.memories.code.file_count}`,
-      `Latest: ${data.memories.code.latest_modified_time ?? "-"}`,
+      ["Files", data.memories.code.file_count],
+      ["Latest", data.memories.code.latest_modified_time ?? "-"],
     ]),
     renderStatusCard("System", data.system.ok, [
-      `CPU: ${data.system.cpu?.usage_percent ?? "-"}%`,
-      `RAM: ${data.system.ram?.usage_percent ?? "-"}%`,
-      `Disk: ${data.system.disk?.usage_percent ?? "-"}%`,
+      ["CPU", `${data.system.cpu?.usage_percent ?? "-"}%`],
+      ["RAM", `${data.system.ram?.usage_percent ?? "-"}%`],
+      ["Disk", `${data.system.disk?.usage_percent ?? "-"}%`],
     ]),
     renderStatusCard("Logs", data.logs.memory.ok && data.logs.code.ok, [
-      `Memory log: ${data.logs.memory.exists ? "present" : "missing"}`,
-      `Code log: ${data.logs.code.exists ? "present" : "missing"}`,
+      ["Memory log", data.logs.memory.exists ? "present" : "missing"],
+      ["Code log", data.logs.code.exists ? "present" : "missing"],
     ], true),
   ].join("");
   document.querySelector("#log-capture").checked = Boolean(data.log_capture?.enabled);
+  markUpdated();
 }
 
 async function refreshLogs() {
   const source = document.querySelector("#log-source").value;
   const data = await api(`/api/dashboard/logs?source=${encodeURIComponent(source)}`);
-  document.querySelector("#log-output").textContent = (data.lines || []).join("\n") || data.error || "";
+  const output = document.querySelector("#log-output");
+  const nearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+  output.textContent = (data.lines || []).join("\n") || data.error || "";
+  if (nearBottom) output.scrollTop = output.scrollHeight;
+  markUpdated();
 }
 
 async function setLogCapture() {
@@ -142,6 +154,7 @@ async function refreshFiles() {
   const data = await api(`/api/dashboard/files?scope=${scope}`);
   state.files = data.files || [];
   renderFiles();
+  markUpdated();
 }
 
 async function uploadFiles(event) {
@@ -212,14 +225,19 @@ async function refreshJobs() {
   const list = document.querySelector("#jobs-list");
   list.innerHTML = "";
   (data.jobs || []).forEach((job) => list.appendChild(jobCard(job)));
+  markUpdated();
 }
 
 async function refreshWatchers() {
   const data = await api("/api/dashboard/watchers");
   for (const scope of ["engineering", "code"]) {
     const watcher = data.watchers?.[scope] || { running: false };
-    document.querySelector(`#watcher-${scope}`).textContent = JSON.stringify(watcher, null, 2);
+    const panel = document.querySelector(`#watcher-${scope}`);
+    const nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 80;
+    panel.textContent = JSON.stringify(watcher, null, 2);
+    if (nearBottom) panel.scrollTop = panel.scrollHeight;
   }
+  markUpdated();
 }
 
 async function watcherAction(scope, action) {
@@ -240,6 +258,7 @@ function switchTab(tab) {
   });
   document.querySelector("#page-title").textContent = titles[tab][0];
   document.querySelector("#page-subtitle").textContent = titles[tab][1];
+  runAction(refreshCurrentTab);
 }
 
 function bind() {
@@ -280,8 +299,25 @@ async function refreshCurrentTab() {
   if (state.currentTab === "overview") await refreshStatus();
   if (state.currentTab === "logs") await refreshLogs();
   if (state.currentTab === "files") await refreshFiles();
+  if (state.currentTab === "upload") await refreshLogs();
+  if (state.currentTab === "repos") await refreshJobs();
   if (state.currentTab === "indexing") await refreshJobs();
   if (state.currentTab === "watchers") await refreshWatchers();
+}
+
+function startPolling() {
+  window.clearInterval(state.poller);
+  state.poller = window.setInterval(() => {
+    runAction(async () => {
+      if (document.hidden) return;
+      if (state.currentTab === "overview") await refreshStatus();
+      if (state.currentTab === "logs") await refreshLogs();
+      if (state.currentTab === "upload") await refreshLogs();
+      if (state.currentTab === "repos") await refreshJobs();
+      if (state.currentTab === "indexing") await refreshJobs();
+      if (state.currentTab === "watchers") await refreshWatchers();
+    });
+  }, 2000);
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -292,6 +328,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     await refreshFiles();
     await refreshJobs();
     await refreshWatchers();
+    startPolling();
   } catch (error) {
     showNotice(error.message, "bad");
   }
