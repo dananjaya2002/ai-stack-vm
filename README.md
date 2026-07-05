@@ -78,6 +78,16 @@ git clone <repo-url> ai-stack-vm
 cd ai-stack-vm
 chmod +x ./ai-stack
 
+./ai-stack install
+```
+
+The installer checks dependencies and system resources, recommends a model,
+updates `.env` safely, downloads the model when a URL is configured, builds the
+images, starts the services, and runs status checks.
+
+Manual setup is still available:
+
+```bash
 ./ai-stack doctor
 ./ai-stack init
 ./ai-stack profile laptop
@@ -121,6 +131,7 @@ Useful daily commands:
 
 ```text
 ./ai-stack doctor
+./ai-stack install
 ./ai-stack init
 ./ai-stack profile laptop|vm16|vm60
 ./ai-stack model list
@@ -155,7 +166,9 @@ The generated `.env` controls the model path and llama.cpp runtime settings:
 
 ```env
 AI_STACK_HOME=/home/ubuntu/ai-stack
+MODEL_NAME=Qwen2.5-Coder-3B-Instruct-Q4_K_M
 MODEL_FILE=Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf
+MODEL_PROFILE=laptop
 MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf
 MODEL_SHA256=
 
@@ -172,6 +185,51 @@ LLAMA_MEMORY_RESERVATION=8gb
 Real `.env` files are ignored by Git. The templates committed to the repo are
 `.env.example`, `scripts/code-proxy/.example.code-proxy.env`, and
 `scripts/memory-proxy/.example.memory-api.env`, and `.example.dashboard.env`.
+
+## Interactive Installer
+
+Run:
+
+```bash
+./ai-stack install
+```
+
+The installer performs a guided first-run setup:
+
+- checks `git`, `curl`, `awk`, Docker/Podman, and Compose availability
+- creates the normal runtime folders and env files
+- detects CPU cores, total/available RAM, disk free space, NVIDIA GPU/VRAM when
+  `nvidia-smi` is available, and NVIDIA container runtime hints
+- recommends a model from detected RAM
+- backs up an existing `.env` as `.env.backup-YYYYMMDD-HHMMSS`
+- writes `MODEL_NAME`, `MODEL_FILE`, `MODEL_URL`, `MODEL_PROFILE`, and
+  `MODEL_SHA256`
+- downloads the selected model if it is missing and `MODEL_URL` is set
+- builds, starts, and checks the stack
+
+Model recommendation rules:
+
+| RAM | Recommended model | Profile |
+|---:|---|---|
+| Under 12 GB | Qwen2.5-Coder-3B-Instruct-Q4_K_M | laptop |
+| 12-31 GB | Qwen2.5-Coder-7B-Instruct-Q4_K_M | vm16 |
+| 32 GB or higher | Qwen3.6-35B-A3B-UD-Q4_K_M | vm60 |
+
+When prompted, press Enter to accept the recommendation or choose `1`, `2`, or
+`3` manually. If you choose the 35B model on lower-resource hardware, the
+installer asks for confirmation before continuing.
+
+Known model URLs are written automatically for the 3B and 7B options. The 35B
+option intentionally leaves `MODEL_URL` empty unless you provide one later; set
+it in `.env` and run:
+
+```bash
+./ai-stack model download <url>
+```
+
+Rerunning `./ai-stack install` is safe: it does not delete existing models, it
+backs up `.env` before changing it, and it skips model download when the selected
+GGUF already exists in `$AI_STACK_HOME/models`.
 
 ## Running Services
 

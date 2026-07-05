@@ -3,9 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
+DEFAULT_MODEL_NAME="Qwen2.5-Coder-3B-Instruct-Q4_K_M"
 DEFAULT_MODEL_FILE="Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
 DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
+MODEL_7B_NAME="Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+MODEL_7B_FILE="Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+MODEL_7B_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+VM60_MODEL_NAME="Qwen3.6-35B-A3B-UD-Q4_K_M"
 VM60_MODEL_FILE="Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+VM60_MODEL_URL=""
 
 usage() {
   cat <<'USAGE'
@@ -13,6 +19,7 @@ ai-stack - local AI stack VM helper
 
 Usage:
   ./ai-stack doctor
+  ./ai-stack install
   ./ai-stack init
   ./ai-stack profile laptop|vm16|vm60
   ./ai-stack model list
@@ -32,12 +39,7 @@ Usage:
   ./ai-stack search memory "query"
 
 First run:
-  ./ai-stack doctor
-  ./ai-stack init
-  ./ai-stack model download
-  ./ai-stack build
-  ./ai-stack up
-  ./ai-stack status
+  ./ai-stack install
 USAGE
 }
 
@@ -72,6 +74,19 @@ compose() {
   fi
 }
 
+compose_available() {
+  if have docker && docker compose version >/dev/null 2>&1; then
+    return 0
+  elif have docker-compose; then
+    return 0
+  elif have podman && podman compose version >/dev/null 2>&1; then
+    return 0
+  elif have podman-compose; then
+    return 0
+  fi
+  return 1
+}
+
 load_env() {
   local model_url_was_set=0
   if [[ -f "${ENV_FILE}" ]]; then
@@ -85,7 +100,9 @@ load_env() {
   fi
 
   AI_STACK_HOME="${AI_STACK_HOME:-${HOME}/ai-stack}"
+  MODEL_NAME="${MODEL_NAME:-${DEFAULT_MODEL_NAME}}"
   MODEL_FILE="${MODEL_FILE:-${DEFAULT_MODEL_FILE}}"
+  MODEL_PROFILE="${MODEL_PROFILE:-laptop}"
   if (( model_url_was_set == 0 )); then
     MODEL_URL="${DEFAULT_MODEL_URL}"
   else
@@ -272,6 +289,8 @@ write_root_env() {
   cat > "${ENV_FILE}" <<EOF
 AI_STACK_HOME=${home_dir}
 MODEL_FILE=${DEFAULT_MODEL_FILE}
+MODEL_NAME=${DEFAULT_MODEL_NAME}
+MODEL_PROFILE=laptop
 MODEL_URL=${DEFAULT_MODEL_URL}
 MODEL_SHA256=
 
@@ -294,7 +313,9 @@ cmd_profile() {
 
   case "${profile}" in
     laptop)
+      set_env_var MODEL_NAME "${DEFAULT_MODEL_NAME}"
       set_env_var MODEL_FILE "${DEFAULT_MODEL_FILE}"
+      set_env_var MODEL_PROFILE "laptop"
       set_env_var MODEL_URL "${DEFAULT_MODEL_URL}"
       set_env_var MODEL_SHA256 ""
       set_env_var LLAMA_THREADS "6"
@@ -308,8 +329,10 @@ cmd_profile() {
       info "applied laptop profile for 12 cores / 16 GB RAM"
       ;;
     vm16)
-      set_env_var MODEL_FILE "${DEFAULT_MODEL_FILE}"
-      set_env_var MODEL_URL "${DEFAULT_MODEL_URL}"
+      set_env_var MODEL_NAME "${MODEL_7B_NAME}"
+      set_env_var MODEL_FILE "${MODEL_7B_FILE}"
+      set_env_var MODEL_PROFILE "vm16"
+      set_env_var MODEL_URL "${MODEL_7B_URL}"
       set_env_var MODEL_SHA256 ""
       set_env_var LLAMA_THREADS "8"
       set_env_var LLAMA_CONTEXT "8192"
@@ -319,11 +342,13 @@ cmd_profile() {
       set_env_var LLAMA_MEMORY_LIMIT "14gb"
       set_env_var LLAMA_CPU_RESERVATION "4"
       set_env_var LLAMA_MEMORY_RESERVATION "8gb"
-      info "applied vm16 profile for OpenShift VM requests 16 CPU / 48Gi memory"
+      info "applied vm16 profile for stronger VMs / workstations"
       ;;
     vm60)
+      set_env_var MODEL_NAME "${VM60_MODEL_NAME}"
       set_env_var MODEL_FILE "${VM60_MODEL_FILE}"
-      set_env_var MODEL_URL ""
+      set_env_var MODEL_PROFILE "vm60"
+      set_env_var MODEL_URL "${VM60_MODEL_URL}"
       set_env_var MODEL_SHA256 ""
       set_env_var LLAMA_THREADS "54"
       set_env_var LLAMA_CONTEXT "12288"
@@ -339,6 +364,240 @@ cmd_profile() {
       fail "usage: ./ai-stack profile laptop|vm16|vm60"
       ;;
   esac
+}
+
+detect_resources() {
+  load_env
+  DETECTED_CPU_CORES="$(cpu_count)"
+  DETECTED_RAM_GB="$(memory_gb)"
+  DETECTED_AVAILABLE_RAM_GB="$(available_memory_gb)"
+  DETECTED_DISK_FREE_GB="$(disk_free_gb "${AI_STACK_HOME}")"
+  DETECTED_DISK_FREE_GB="${DETECTED_DISK_FREE_GB:-0}"
+  DETECTED_GPU_NAME="none"
+  DETECTED_GPU_VRAM_GB="0"
+  DETECTED_NVIDIA_TOOLKIT="not detected"
+
+  if have nvidia-smi; then
+    local gpu_line gpu_name gpu_vram_mb
+    gpu_line="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${gpu_line}" ]]; then
+      gpu_name="${gpu_line%,*}"
+      gpu_vram_mb="${gpu_line##*,}"
+      gpu_name="$(printf '%s' "${gpu_name}" | awk '{$1=$1; print}')"
+      gpu_vram_mb="$(printf '%s' "${gpu_vram_mb}" | awk '{$1=$1; print}')"
+      DETECTED_GPU_NAME="${gpu_name}"
+      DETECTED_GPU_VRAM_GB="$(awk -v mb="${gpu_vram_mb}" 'BEGIN { printf "%.0f", mb / 1024 }')"
+    fi
+  fi
+
+  if [[ "${DETECTED_GPU_NAME}" != "none" ]]; then
+    if have docker && docker info 2>/dev/null | grep -qi nvidia; then
+      DETECTED_NVIDIA_TOOLKIT="docker nvidia runtime detected"
+    elif have podman && podman info 2>/dev/null | grep -qi nvidia; then
+      DETECTED_NVIDIA_TOOLKIT="podman nvidia runtime detected"
+    else
+      DETECTED_NVIDIA_TOOLKIT="not detected"
+    fi
+  fi
+}
+
+recommend_model() {
+  if (( DETECTED_RAM_GB < 12 )); then
+    RECOMMENDED_MODEL_CHOICE="1"
+  elif (( DETECTED_RAM_GB < 32 )); then
+    RECOMMENDED_MODEL_CHOICE="2"
+  else
+    RECOMMENDED_MODEL_CHOICE="3"
+  fi
+}
+
+print_detected_resources() {
+  printf '\nDetected system resources:\n\n'
+  printf 'CPU cores: %s\n' "${DETECTED_CPU_CORES}"
+  printf 'RAM: %s GB total, %s GB available\n' "${DETECTED_RAM_GB}" "${DETECTED_AVAILABLE_RAM_GB}"
+  printf 'Disk free: %s GB under %s\n' "${DETECTED_DISK_FREE_GB}" "${AI_STACK_HOME}"
+  if [[ "${DETECTED_GPU_NAME}" == "none" ]]; then
+    printf 'GPU: none detected\n'
+  else
+    printf 'GPU: %s, %s GB VRAM\n' "${DETECTED_GPU_NAME}" "${DETECTED_GPU_VRAM_GB}"
+    printf 'NVIDIA Container Toolkit: %s\n' "${DETECTED_NVIDIA_TOOLKIT}"
+  fi
+  printf '\nRecommended model: %s\n' "$(model_name_for_choice "${RECOMMENDED_MODEL_CHOICE}")"
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local answer
+  read -r -p "${prompt}" answer || return 1
+  case "${answer}" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_model_selection() {
+  local choice selected_name
+  print_detected_resources
+
+  if (( DETECTED_DISK_FREE_GB > 0 && DETECTED_DISK_FREE_GB < 20 )); then
+    warn "disk free space is low (${DETECTED_DISK_FREE_GB} GB). Model downloads and container builds may fail."
+    if ! prompt_yes_no "Continue anyway? [y/N]: "; then
+      info "install cancelled"
+      exit 0
+    fi
+  fi
+
+  while true; do
+    cat <<EOF
+
+Choose model to install:
+
+[1] ${DEFAULT_MODEL_NAME}
+    $(model_description_for_choice 1)
+
+[2] ${MODEL_7B_NAME}
+    $(model_description_for_choice 2)
+
+[3] ${VM60_MODEL_NAME}
+    $(model_description_for_choice 3)
+
+EOF
+    read -r -p "Enter choice [recommended: ${RECOMMENDED_MODEL_CHOICE}]: " choice || {
+      info "install cancelled"
+      exit 0
+    }
+    choice="${choice:-${RECOMMENDED_MODEL_CHOICE}}"
+    case "${choice}" in
+      1|2|3)
+        if [[ "${choice}" == "3" && "${DETECTED_RAM_GB}" -lt 32 ]]; then
+          warn "Qwen3.6-35B may exceed your available resources and may be slow or unstable."
+          if ! prompt_yes_no "Continue anyway? [y/N]: "; then
+            continue
+          fi
+        fi
+        SELECTED_MODEL_CHOICE="${choice}"
+        selected_name="$(model_name_for_choice "${choice}")"
+        info "selected model: ${selected_name}"
+        return
+        ;;
+      *)
+        warn "invalid choice: ${choice}"
+        ;;
+    esac
+  done
+}
+
+backup_env() {
+  if [[ -f "${ENV_FILE}" ]]; then
+    local backup
+    backup="${ENV_FILE}.backup-$(date +%Y%m%d-%H%M%S)"
+    cp "${ENV_FILE}" "${backup}"
+    info "backed up .env to ${backup}"
+  fi
+}
+
+write_model_env() {
+  local choice="$1"
+  local model_name model_file model_url model_profile
+  model_name="$(model_name_for_choice "${choice}")"
+  model_file="$(model_file_for_choice "${choice}")"
+  model_url="$(model_url_for_choice "${choice}")"
+  model_profile="$(model_profile_for_choice "${choice}")"
+
+  set_env_var MODEL_NAME "${model_name}"
+  set_env_var MODEL_FILE "${model_file}"
+  set_env_var MODEL_PROFILE "${model_profile}"
+  set_env_var MODEL_URL "${model_url}"
+  set_env_var MODEL_SHA256 ""
+
+  case "${model_profile}" in
+    laptop)
+      set_env_var LLAMA_THREADS "6"
+      set_env_var LLAMA_CONTEXT "8192"
+      set_env_var LLAMA_BATCH "512"
+      set_env_var LLAMA_UBATCH "256"
+      set_env_var LLAMA_CPU_LIMIT "8"
+      set_env_var LLAMA_MEMORY_LIMIT "12gb"
+      set_env_var LLAMA_CPU_RESERVATION "4"
+      set_env_var LLAMA_MEMORY_RESERVATION "6gb"
+      ;;
+    vm16)
+      set_env_var LLAMA_THREADS "8"
+      set_env_var LLAMA_CONTEXT "8192"
+      set_env_var LLAMA_BATCH "512"
+      set_env_var LLAMA_UBATCH "256"
+      set_env_var LLAMA_CPU_LIMIT "8"
+      set_env_var LLAMA_MEMORY_LIMIT "14gb"
+      set_env_var LLAMA_CPU_RESERVATION "4"
+      set_env_var LLAMA_MEMORY_RESERVATION "8gb"
+      ;;
+    vm60)
+      set_env_var LLAMA_THREADS "54"
+      set_env_var LLAMA_CONTEXT "12288"
+      set_env_var LLAMA_BATCH "2048"
+      set_env_var LLAMA_UBATCH "1024"
+      set_env_var LLAMA_CPU_LIMIT "54"
+      set_env_var LLAMA_MEMORY_LIMIT "38gb"
+      set_env_var LLAMA_CPU_RESERVATION "30"
+      set_env_var LLAMA_MEMORY_RESERVATION "24gb"
+      ;;
+  esac
+
+  info "updated .env for ${model_name}"
+}
+
+require_install_dependencies() {
+  for bin in git curl awk; do
+    have "${bin}" || fail "${bin} is required for install"
+  done
+
+  if ! have docker && ! have podman; then
+    fail "Docker or Podman is required for install"
+  fi
+
+  if ! compose_available; then
+    fail "Compose was not found. Install Docker Compose, podman-compose, or a Podman version with 'podman compose'."
+  fi
+}
+
+install_stack() {
+  local env_existed=0 selected_file selected_url selected_dest
+  [[ -f "${ENV_FILE}" ]] && env_existed=1
+
+  cmd_doctor
+  require_install_dependencies
+  cmd_init
+  detect_resources
+  recommend_model
+  prompt_model_selection
+
+  if (( env_existed == 1 )); then
+    backup_env
+  fi
+
+  write_model_env "${SELECTED_MODEL_CHOICE}"
+  load_env
+
+  selected_file="${MODEL_FILE}"
+  selected_url="${MODEL_URL}"
+  selected_dest="${AI_STACK_HOME}/models/${selected_file}"
+
+  if [[ -f "${selected_dest}" ]]; then
+    info "model already exists, skipping download: ${selected_dest}"
+  elif [[ -n "${selected_url}" ]]; then
+    cmd_model_download "${selected_url}"
+  else
+    warn "MODEL_URL is empty for ${MODEL_NAME}; skipping model download."
+    warn "Set MODEL_URL in .env and run: ./ai-stack model download <url>"
+  fi
+
+  cmd_build
+  cmd_up
+  cmd_status
+}
+
+cmd_install() {
+  install_stack
 }
 
 write_proxy_envs() {
@@ -388,6 +647,66 @@ EOF
   else
     info "scripts/memory-proxy/memory-api.env already exists"
   fi
+}
+
+available_memory_gb() {
+  if [[ -r /proc/meminfo ]]; then
+    awk '/MemAvailable/ { printf "%.0f", $2 / 1024 / 1024 }' /proc/meminfo
+  elif have free; then
+    free -g | awk '/Mem:/ { print $7 }'
+  else
+    printf '0'
+  fi
+}
+
+disk_free_gb() {
+  local path="${1:-.}"
+  df -Pk "${path}" 2>/dev/null | awk 'NR == 2 { printf "%.0f", $4 / 1024 / 1024 }'
+}
+
+model_name_for_choice() {
+  case "$1" in
+    1) printf '%s' "${DEFAULT_MODEL_NAME}" ;;
+    2) printf '%s' "${MODEL_7B_NAME}" ;;
+    3) printf '%s' "${VM60_MODEL_NAME}" ;;
+    *) return 1 ;;
+  esac
+}
+
+model_file_for_choice() {
+  case "$1" in
+    1) printf '%s' "${DEFAULT_MODEL_FILE}" ;;
+    2) printf '%s' "${MODEL_7B_FILE}" ;;
+    3) printf '%s' "${VM60_MODEL_FILE}" ;;
+    *) return 1 ;;
+  esac
+}
+
+model_url_for_choice() {
+  case "$1" in
+    1) printf '%s' "${DEFAULT_MODEL_URL}" ;;
+    2) printf '%s' "${MODEL_7B_URL}" ;;
+    3) printf '%s' "${VM60_MODEL_URL}" ;;
+    *) return 1 ;;
+  esac
+}
+
+model_profile_for_choice() {
+  case "$1" in
+    1) printf 'laptop' ;;
+    2) printf 'vm16' ;;
+    3) printf 'vm60' ;;
+    *) return 1 ;;
+  esac
+}
+
+model_description_for_choice() {
+  case "$1" in
+    1) printf 'Best for laptops and low-resource systems. Suggested minimum: 4-6 GB RAM, optional GPU.' ;;
+    2) printf 'Best balance for coding and RAG on stronger VMs or workstations. Suggested minimum: 12-16 GB RAM.' ;;
+    3) printf 'High-resource model. Suggested minimum: 32-48 GB RAM or a strong GPU/large VM.' ;;
+    *) return 1 ;;
+  esac
 }
 
 write_dashboard_env() {
@@ -585,6 +904,7 @@ main() {
   case "${command}" in
     help|-h|--help) usage ;;
     doctor) cmd_doctor "$@" ;;
+    install) cmd_install "$@" ;;
     init) cmd_init "$@" ;;
     profile) cmd_profile "$@" ;;
     build) cmd_build "$@" ;;
