@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Stack Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <h1>AI Stack</h1>
+            <p>Local RAG control</p>
+          </div>
+        </div>
+
+        <nav class="tabs" aria-label="Dashboard sections">
+          <button class="tab-button active" data-tab="overview">Overview</button>
+          <button class="tab-button" data-tab="logs">Logs</button>
+          <button class="tab-button" data-tab="files">Memory Files</button>
+          <button class="tab-button" data-tab="upload">Upload</button>
+          <button class="tab-button" data-tab="repos">Repositories</button>
+          <button class="tab-button" data-tab="indexing">Indexing</button>
+          <button class="tab-button" data-tab="watchers">Watchers</button>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <h2 id="page-title">Overview</h2>
+            <p id="page-subtitle">Service health, storage, and system load.</p>
+          </div>
+          <div class="token-box">
+            <input id="admin-token" type="password" placeholder="Admin token" autocomplete="off" />
+            <button id="save-token" class="secondary">Save</button>
+          </div>
+        </header>
+
+        <section id="notice" class="notice hidden"></section>
+
+        <section class="tab-panel active" id="tab-overview">
+          <div class="toolbar">
+            <button id="refresh-status">Refresh</button>
+          </div>
+          <div id="status-grid" class="status-grid"></div>
+        </section>
+
+        <section class="tab-panel" id="tab-logs">
+          <div class="toolbar">
+            <select id="log-source">
+              <option value="dashboard">Dashboard jobs</option>
+              <option value="watchers">Watchers</option>
+              <option value="memory">Memory proxy</option>
+              <option value="code">Code proxy</option>
+            </select>
+            <button id="refresh-logs">Refresh</button>
+            <label class="toggle">
+              <input id="log-capture" type="checkbox" />
+              <span>Temporary log capture</span>
+            </label>
+          </div>
+          <pre id="log-output" class="log-output"></pre>
+        </section>
+
+        <section class="tab-panel" id="tab-files">
+          <div class="toolbar">
+            <select id="files-scope">
+              <option value="engineering">Engineering memory</option>
+              <option value="code">Code memory</option>
+            </select>
+            <input id="files-filter" type="search" placeholder="Filter files" />
+            <button id="refresh-files">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Path</th>
+                  <th>Type</th>
+                  <th>Size</th>
+                  <th>Modified</th>
+                </tr>
+              </thead>
+              <tbody id="files-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="tab-panel" id="tab-upload">
+          <form id="upload-form" class="form-card">
+            <label>
+              Destination
+              <select name="scope">
+                <option value="engineering">Engineering memory</option>
+                <option value="code">Code memory</option>
+              </select>
+            </label>
+            <label>
+              Files
+              <input name="files" type="file" multiple />
+            </label>
+            <button type="submit">Upload</button>
+          </form>
+          <pre id="upload-result" class="result-box"></pre>
+        </section>
+
+        <section class="tab-panel" id="tab-repos">
+          <form id="clone-form" class="form-card">
+            <label>
+              Repository HTTPS URL
+              <input name="repo_url" type="url" placeholder="https://github.com/user/repo.git" required />
+            </label>
+            <label>
+              Folder name
+              <input name="repo_name" type="text" placeholder="optional" />
+            </label>
+            <label>
+              One-time token
+              <input name="token" type="password" placeholder="only for private repos" autocomplete="off" />
+            </label>
+            <label class="toggle">
+              <input name="update_existing" type="checkbox" />
+              <span>Update existing repo with git pull</span>
+            </label>
+            <button type="submit">Clone or Update</button>
+          </form>
+          <pre id="clone-result" class="result-box"></pre>
+        </section>
+
+        <section class="tab-panel" id="tab-indexing">
+          <form id="index-form" class="form-card">
+            <label>
+              Scope
+              <select name="scope">
+                <option value="engineering">Engineering memory</option>
+                <option value="code">Code memory</option>
+              </select>
+            </label>
+            <label>
+              Target path
+              <input name="target" type="text" placeholder="blank = full scope" />
+            </label>
+            <button type="submit">Start Indexing</button>
+          </form>
+          <div class="toolbar">
+            <button id="refresh-jobs">Refresh jobs</button>
+          </div>
+          <div id="jobs-list" class="jobs-list"></div>
+        </section>
+
+        <section class="tab-panel" id="tab-watchers">
+          <div class="watcher-grid">
+            <article class="form-card">
+              <h3>Engineering watcher</h3>
+              <div class="button-row">
+                <button data-watch-start="engineering">Start</button>
+                <button class="secondary" data-watch-stop="engineering">Stop</button>
+              </div>
+              <pre id="watcher-engineering" class="result-box"></pre>
+            </article>
+            <article class="form-card">
+              <h3>Code watcher</h3>
+              <div class="button-row">
+                <button data-watch-start="code">Start</button>
+                <button class="secondary" data-watch-stop="code">Stop</button>
+              </div>
+              <pre id="watcher-code" class="result-box"></pre>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

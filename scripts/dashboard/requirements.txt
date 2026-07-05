@@ -3,3 +3,8 @@ uvicorn
 requests
 psutil
 python-dotenv
+python-multipart
+watchdog
+qdrant-client
+sentence-transformers
+tqdm

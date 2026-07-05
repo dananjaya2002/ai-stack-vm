@@ -9,4 +9,4 @@
 | Qdrant gRPC       | 6334  | Vector database (gRPC)             |
 | code-proxy        | 9001  | Code-RAG OpenAI-compatible proxy   |
 | memory-proxy      | 9002  | Memory-RAG OpenAI-compatible proxy |
-| dashboard API     | 9100  | Optional stack status API          |
+| dashboard         | 9100  | Optional management website/API    |

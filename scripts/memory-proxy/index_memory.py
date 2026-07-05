@@ -16,10 +16,10 @@ from sentence_transformers import SentenceTransformer
 
 
 # CONFIG
-MEMORY_DIR = Path.home() / "ai-stack/memory/engineering-memory"
-QDRANT_HOST = "localhost"
-QDRANT_PORT = 6333
-COLLECTION_NAME = "engineering-memory"
+MEMORY_DIR = Path(os.getenv("MEMORY_DIR", os.getenv("MEMORY_ROOT", str(Path.home() / "ai-stack/memory/engineering-memory"))))
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", os.getenv("MEMORY_QDRANT_COLLECTION", "engineering-memory"))
 
 CHUNK_SIZE = 500  # characters
 

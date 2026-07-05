@@ -548,16 +548,15 @@ def index_target(target: Path):
         print(f"❌ Target does not exist: {target}")
         sys.exit(1)
 
-    repo_root = find_repo_root(target)
     files = collect_files(target)
 
-    print(f"Repo root detected: {repo_root}")
     print(f"Files selected for indexing: {len(files)}")
 
     total_chunks = 0
     indexed_files = 0
 
     for file_path in files:
+        repo_root = find_repo_root(file_path)
         chunk_count = index_file(client, model, repo_root, file_path)
 
         if chunk_count > 0:

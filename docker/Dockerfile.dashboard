@@ -5,14 +5,21 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git gcc build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY scripts/dashboard/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt && \
-    useradd -m -u 10001 appuser && \
-    chown -R appuser:appuser /app
+    mkdir -p /root/.cache /tmp/ai-stack-dashboard
 
-COPY --chown=appuser:appuser scripts/dashboard/dashboard_api.py ./dashboard_api.py
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-USER appuser
+COPY scripts/dashboard/dashboard_api.py ./dashboard_api.py
+COPY scripts/dashboard/static ./static
+COPY scripts/memory-proxy ./memory-proxy
+COPY scripts/watcher ./watcher
+
 EXPOSE 9100
 
 CMD ["uvicorn", "dashboard_api:app", "--host", "0.0.0.0", "--port", "9100"]

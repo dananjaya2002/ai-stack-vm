@@ -16,7 +16,7 @@ Container host / VM
 |-- memory-proxy  engineering-memory RAG proxy       -> http://localhost:9002/v1
 |-- code-proxy    code-memory RAG proxy              -> http://localhost:9001/v1
 |-- open-webui    browser chat UI                    -> http://localhost:8080
-`-- dashboard     stack status API                   -> http://localhost:9100
+`-- dashboard     management website/API            -> http://localhost:9100
 ```
 
 Optional laptop flow:
@@ -55,7 +55,7 @@ memory.
 | Qdrant gRPC | 6334 | Qdrant default gRPC port, not published by current compose |
 | code-proxy | 9001 | OpenAI-compatible code RAG proxy |
 | memory-proxy | 9002 | OpenAI-compatible memory RAG proxy |
-| dashboard API | 9100 | Optional stack status API |
+| dashboard | 9100 | Optional management website and status API |
 
 ## Prerequisites
 
@@ -212,7 +212,7 @@ Run only code-proxy + Qdrant:
 docker compose -f docker-compose.code-proxy.yml up -d
 ```
 
-Run the optional dashboard API:
+Run the optional dashboard website:
 
 ```bash
 ./ai-stack dashboard
@@ -335,15 +335,50 @@ curl http://localhost:9001/v1/models
 curl http://localhost:9002/v1/models
 ```
 
-## Dashboard API
+## Dashboard Website
 
-The optional dashboard API gives a quick JSON status snapshot for llama.cpp,
-Qdrant, engineering/code memory folders, proxy logs, and CPU/RAM/disk usage.
+The optional dashboard at `http://localhost:9100` provides a tabbed local UI for
+status, logs, memory files, uploads, repo cloning, indexing, and watcher control.
+Write/control actions require the generated dashboard admin token.
 
-Run it as a container:
+Run or rebuild it as a container:
 
 ```bash
 ./ai-stack dashboard
+```
+
+Find the token:
+
+```bash
+grep DASHBOARD_ADMIN_TOKEN scripts/dashboard/dashboard.env
+```
+
+Open:
+
+```text
+http://localhost:9100
+```
+
+Tabs:
+
+- Overview: llama.cpp, Qdrant, memory folder, log, CPU, RAM, and disk status.
+- Logs: memory/code proxy logs plus dashboard job and watcher output.
+- Memory Files: browse engineering and code memory files.
+- Upload: upload engineering memory files or code files/zip archives.
+- Repositories: clone public repos or private HTTPS repos with a one-time token.
+- Indexing: start full or targeted indexing jobs.
+- Watchers: start/stop automatic engineering and code reindex watchers.
+
+Status remains available as JSON:
+
+```bash
+curl http://localhost:9100/api/dashboard/status
+```
+
+Write/control API calls require:
+
+```text
+X-Dashboard-Token: <DASHBOARD_ADMIN_TOKEN>
 ```
 
 Install requirements for host-run mode:
@@ -360,42 +395,17 @@ cd scripts/dashboard
 ../../python-envs/dashboard/bin/uvicorn dashboard_api:app --host 0.0.0.0 --port 9100
 ```
 
-Query status:
-
-```bash
-curl http://localhost:9100/api/dashboard/status
-```
-
-Example response:
+Example status response:
 
 ```json
 {
-  "ok": false,
+  "ok": true,
   "timestamp": "2026-07-05T09:15:20.120000+00:00",
-  "llama": {
-    "ok": true,
-    "latency_ms": 42.1,
-    "approximate_token_speed": {
-      "tokens_per_second": 18.4,
-      "source": "completion_tokens / wall latency",
-      "note": "Approximate wall-clock estimate; llama.cpp timing fields were not present."
-    }
-  },
-  "qdrant": {
-    "ok": true,
-    "latency_ms": 12.5
-  },
+  "llama": { "ok": true, "latency_ms": 42.1 },
+  "qdrant": { "ok": true, "latency_ms": 12.5 },
   "memories": {
-    "engineering": {
-      "ok": true,
-      "file_count": 18,
-      "latest_modified_time": "2026-07-05T08:50:12+00:00"
-    },
-    "code": {
-      "ok": true,
-      "file_count": 240,
-      "latest_modified_time": "2026-07-05T08:55:02+00:00"
-    }
+    "engineering": { "ok": true, "file_count": 18 },
+    "code": { "ok": true, "file_count": 240 }
   },
   "system": {
     "ok": true,
@@ -404,8 +414,8 @@ Example response:
     "disk": { "usage_percent": 71.4 }
   },
   "logs": {
-    "memory": { "ok": false, "exists": false },
-    "code": { "ok": false, "exists": false }
+    "memory": { "warning": true, "exists": false },
+    "code": { "warning": true, "exists": false }
   }
 }
 ```

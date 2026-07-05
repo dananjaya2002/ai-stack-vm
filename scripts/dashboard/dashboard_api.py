@@ -1,38 +1,98 @@
 import os
+import re
+import shutil
+import subprocess
+import tempfile
+import threading
 import time
+import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import psutil
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 
 load_dotenv()
-load_dotenv(Path(__file__).with_name("dashboard.env"), override=False)
+load_dotenv(BASE_DIR / "dashboard.env", override=False)
 
 LLAMA_BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8082/v1").rstrip("/")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")
-ENGINEERING_MEMORY_DIR = Path(
-    os.getenv("ENGINEERING_MEMORY_DIR", str(Path.home() / "ai-stack/memory/engineering-memory"))
-)
-CODE_MEMORY_DIR = Path(os.getenv("CODE_MEMORY_DIR", str(Path.home() / "ai-stack/memory/code-memory")))
-MEMORY_LOG = Path(os.getenv("MEMORY_LOG", str(Path.home() / "ai-stack/logs/memory_api.log")))
-CODE_LOG = Path(os.getenv("CODE_LOG", str(Path.home() / "ai-stack/logs/code_proxy.log")))
+QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
+QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
 
+ENGINEERING_MEMORY_DIR = Path(os.getenv("ENGINEERING_MEMORY_DIR", "/memory/engineering-memory"))
+CODE_MEMORY_DIR = Path(os.getenv("CODE_MEMORY_DIR", "/memory/code-memory"))
+MEMORY_LOG = Path(os.getenv("MEMORY_LOG", "/logs/memory/memory_api.log"))
+CODE_LOG = Path(os.getenv("CODE_LOG", "/logs/code/code_proxy.log"))
+DASHBOARD_LOG_DIR = Path(os.getenv("DASHBOARD_LOG_DIR", "/tmp/ai-stack-dashboard"))
+
+INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
+INDEX_CODE_SCRIPT = Path(os.getenv("INDEX_CODE_SCRIPT", "/app/watcher/index_code.py"))
+WATCH_MEMORY_SCRIPT = Path(os.getenv("WATCH_MEMORY_SCRIPT", "/app/memory-proxy/watch_memory.py"))
+WATCH_CODE_SCRIPT = Path(os.getenv("WATCH_CODE_SCRIPT", "/app/watcher/watch_code.py"))
+PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
+
+ADMIN_TOKEN = os.getenv("DASHBOARD_ADMIN_TOKEN", "")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
+MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
+MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
 
-app = FastAPI(title="AI Stack Dashboard API")
+app = FastAPI(title="AI Stack Dashboard")
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+JOBS: Dict[str, Dict[str, Any]] = {}
+JOBS_LOCK = threading.Lock()
+WATCHERS: Dict[str, Dict[str, Any]] = {}
+WATCHERS_LOCK = threading.Lock()
+LOG_CAPTURE = {"enabled": True}
+
+
+class CloneRequest(BaseModel):
+    repo_url: str
+    repo_name: Optional[str] = None
+    token: Optional[str] = None
+    update_existing: bool = False
+
+
+class IndexRequest(BaseModel):
+    scope: str
+    target: Optional[str] = None
+
+
+class LogCaptureRequest(BaseModel):
+    enabled: bool
 
 
 def iso_time(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
+def now_iso() -> str:
+    return iso_time(time.time())
+
+
 def error_payload(message: str, **extra: Any) -> Dict[str, Any]:
     return {"ok": False, "error": message, **extra}
+
+
+def require_admin_token(x_dashboard_token: Optional[str] = Header(default=None)) -> None:
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="DASHBOARD_ADMIN_TOKEN is not configured.")
+    if x_dashboard_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid dashboard token.")
 
 
 def get_json(url: str) -> Dict[str, Any]:
@@ -94,12 +154,7 @@ def check_llama() -> Dict[str, Any]:
     try:
         models = get_json(f"{LLAMA_BASE_URL}/models")
     except Exception as exc:
-        return error_payload(
-            str(exc),
-            base_url=LLAMA_BASE_URL,
-            latency_ms=None,
-            approximate_token_speed=None,
-        )
+        return error_payload(str(exc), base_url=LLAMA_BASE_URL, latency_ms=None, approximate_token_speed=None)
 
     model_id = first_llama_model(models["body"]) or os.getenv("LLAMA_MODEL", "local-model")
     result: Dict[str, Any] = {
@@ -130,9 +185,8 @@ def check_llama() -> Dict[str, Any]:
         )
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         response.raise_for_status()
-        response_body = response.json()
         result["chat_latency_ms"] = latency_ms
-        result["approximate_token_speed"] = extract_token_speed(response_body, latency_ms)
+        result["approximate_token_speed"] = extract_token_speed(response.json(), latency_ms)
     except Exception as exc:
         result["approximate_token_speed"] = {
             "tokens_per_second": None,
@@ -158,7 +212,6 @@ def check_qdrant() -> Dict[str, Any]:
             }
         except Exception as exc:
             errors.append(f"{url}: {exc}")
-
     return error_payload("; ".join(errors), url=QDRANT_URL, latency_ms=None)
 
 
@@ -193,6 +246,7 @@ def log_stats(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {
             "ok": False,
+            "warning": True,
             "error": "Log file does not exist.",
             "path": str(path),
             "exists": False,
@@ -203,6 +257,7 @@ def log_stats(path: Path) -> Dict[str, Any]:
         stat = path.stat()
         return {
             "ok": True,
+            "warning": False,
             "error": None,
             "path": str(path),
             "exists": True,
@@ -220,10 +275,7 @@ def system_stats() -> Dict[str, Any]:
         return {
             "ok": True,
             "error": None,
-            "cpu": {
-                "usage_percent": psutil.cpu_percent(interval=0.1),
-                "count": psutil.cpu_count(),
-            },
+            "cpu": {"usage_percent": psutil.cpu_percent(interval=0.1), "count": psutil.cpu_count()},
             "ram": {
                 "usage_percent": memory.percent,
                 "total_bytes": memory.total,
@@ -242,36 +294,455 @@ def system_stats() -> Dict[str, Any]:
         return error_payload(str(exc))
 
 
+def scope_root(scope: str) -> Path:
+    if scope == "engineering":
+        return ENGINEERING_MEMORY_DIR
+    if scope == "code":
+        return CODE_MEMORY_DIR
+    raise HTTPException(status_code=400, detail="scope must be engineering or code")
+
+
+def safe_relative_path(raw_path: str) -> Path:
+    cleaned = (raw_path or "").replace("\\", "/").strip("/")
+    path = Path(cleaned)
+    if not cleaned or path.is_absolute() or ".." in path.parts:
+        raise HTTPException(status_code=400, detail="Invalid path.")
+    return path
+
+
+def safe_join(root: Path, raw_path: Optional[str]) -> Path:
+    root = root.resolve()
+    if not raw_path:
+        return root
+    candidate = (root / safe_relative_path(raw_path)).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(status_code=400, detail="Path escapes memory directory.")
+    return candidate
+
+
+def list_files(scope: str) -> Dict[str, Any]:
+    root = scope_root(scope)
+    if not root.exists():
+        return {"ok": False, "error": "Directory does not exist.", "scope": scope, "root": str(root), "files": []}
+
+    files = []
+    for item in sorted(root.rglob("*")):
+        if not item.is_file():
+            continue
+        try:
+            stat = item.stat()
+            relative_path = str(item.relative_to(root))
+        except Exception:
+            continue
+        files.append(
+            {
+                "scope": scope,
+                "path": relative_path,
+                "size_bytes": stat.st_size,
+                "modified_time": iso_time(stat.st_mtime),
+                "extension": item.suffix.lower(),
+            }
+        )
+
+    return {"ok": True, "error": None, "scope": scope, "root": str(root), "files": files}
+
+
+def read_last_lines(path: Path, max_lines: int = MAX_LOG_LINES) -> Dict[str, Any]:
+    if not path.exists():
+        return {"ok": False, "error": "Log file does not exist.", "path": str(path), "lines": []}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return {"ok": True, "error": None, "path": str(path), "lines": lines[-max_lines:]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "path": str(path), "lines": []}
+
+
+def redact(text: str, secrets: Optional[List[str]] = None) -> str:
+    redacted = text
+    for secret in secrets or []:
+        if secret:
+            redacted = redacted.replace(secret, "[redacted]")
+    redacted = re.sub(r"https://[^@\s]+@", "https://[redacted]@", redacted)
+    return redacted
+
+
+def append_job_output(job: Dict[str, Any], line: str, secrets: Optional[List[str]] = None) -> None:
+    if not LOG_CAPTURE["enabled"]:
+        return
+    clean = redact(line.rstrip(), secrets)
+    output = job.setdefault("output", [])
+    output.append(clean)
+    del output[:-MAX_LOG_LINES]
+
+
+def job_public(job: Dict[str, Any]) -> Dict[str, Any]:
+    public = dict(job)
+    public["output"] = list(job.get("output", []))[-MAX_LOG_LINES:]
+    return public
+
+
+def run_job(name: str, command: List[str], env: Optional[Dict[str, str]] = None, cwd: Optional[Path] = None, secrets: Optional[List[str]] = None) -> Dict[str, Any]:
+    job_id = str(uuid.uuid4())
+    job = {
+        "id": job_id,
+        "name": name,
+        "status": "running",
+        "command": [redact(part, secrets) for part in command],
+        "started_at": now_iso(),
+        "finished_at": None,
+        "duration_seconds": None,
+        "exit_code": None,
+        "output": [],
+    }
+
+    with JOBS_LOCK:
+        for existing in JOBS.values():
+            if existing.get("status") == "running" and existing.get("name") == name:
+                raise HTTPException(status_code=409, detail=f"Job already running: {name}")
+        JOBS[job_id] = job
+
+    def worker() -> None:
+        started = time.time()
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(cwd) if cwd else None,
+                env=env or os.environ.copy(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            job["pid"] = process.pid
+            assert process.stdout is not None
+            for line in process.stdout:
+                append_job_output(job, line, secrets)
+            exit_code = process.wait()
+            job["exit_code"] = exit_code
+            job["status"] = "succeeded" if exit_code == 0 else "failed"
+        except Exception as exc:
+            job["status"] = "failed"
+            job["error"] = redact(str(exc), secrets)
+        finally:
+            job["finished_at"] = now_iso()
+            job["duration_seconds"] = round(time.time() - started, 2)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return job_public(job)
+
+
+def index_env(collection: str, root: Path) -> Dict[str, str]:
+    env = os.environ.copy()
+    env["QDRANT_HOST"] = QDRANT_HOST
+    env["QDRANT_PORT"] = QDRANT_PORT
+    env["QDRANT_COLLECTION"] = collection
+    env["MEMORY_DIR"] = str(root)
+    env["MEMORY_ROOT"] = str(root)
+    env["REPOS_ROOT"] = str(CODE_MEMORY_DIR)
+    return env
+
+
+def infer_repo_name(repo_url: str) -> str:
+    path = urlparse(repo_url).path.rstrip("/")
+    name = Path(path).name
+    if name.endswith(".git"):
+        name = name[:-4]
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-")
+    if not name:
+        raise HTTPException(status_code=400, detail="Could not infer repository name.")
+    return name
+
+
+def build_git_env(token: Optional[str]) -> Dict[str, str]:
+    env = os.environ.copy()
+    if not token:
+        return env
+
+    askpass_dir = Path(tempfile.mkdtemp(prefix="dashboard-git-askpass-"))
+    askpass_script = askpass_dir / "askpass.sh"
+    askpass_script.write_text(
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "*Username*) printf '%s\\n' x-access-token ;;\n"
+        "*) printf '%s\\n' \"$DASHBOARD_GIT_TOKEN\" ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    askpass_script.chmod(0o700)
+    env["GIT_ASKPASS"] = str(askpass_script)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["DASHBOARD_GIT_TOKEN"] = token
+    return env
+
+
+def save_upload(upload: UploadFile, destination_root: Path) -> Dict[str, Any]:
+    relative_path = safe_relative_path(upload.filename or "")
+    destination = safe_join(destination_root, str(relative_path))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    total = 0
+    with destination.open("wb") as handle:
+        while True:
+            chunk = upload.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail=f"Upload exceeds {MAX_UPLOAD_BYTES} bytes.")
+            handle.write(chunk)
+
+    return {"filename": upload.filename, "path": str(destination.relative_to(destination_root)), "size_bytes": total}
+
+
+def extract_zip_safe(zip_path: Path, destination_root: Path) -> List[str]:
+    extracted = []
+    with zipfile.ZipFile(zip_path) as archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            target = safe_join(destination_root, member.filename)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as source, target.open("wb") as destination:
+                shutil.copyfileobj(source, destination)
+            extracted.append(str(target.relative_to(destination_root)))
+    zip_path.unlink(missing_ok=True)
+    return extracted
+
+
+def watcher_public(scope: str, watcher: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not watcher:
+        return {"scope": scope, "running": False}
+    process = watcher.get("process")
+    running = bool(process and process.poll() is None)
+    return {
+        "scope": scope,
+        "running": running,
+        "pid": process.pid if running else watcher.get("pid"),
+        "started_at": watcher.get("started_at"),
+        "uptime_seconds": round(time.time() - watcher["started_ts"], 2) if running else None,
+        "watched_path": watcher.get("watched_path"),
+        "output": list(watcher.get("output", []))[-MAX_LOG_LINES:],
+    }
+
+
+@app.get("/")
+def dashboard_home() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @app.get("/api/dashboard/status")
 def dashboard_status() -> Dict[str, Any]:
     llama = check_llama()
     qdrant = check_qdrant()
-    memories = {
-        "engineering": memory_stats(ENGINEERING_MEMORY_DIR),
-        "code": memory_stats(CODE_MEMORY_DIR),
-    }
-    logs = {
-        "memory": log_stats(MEMORY_LOG),
-        "code": log_stats(CODE_LOG),
-    }
+    memories = {"engineering": memory_stats(ENGINEERING_MEMORY_DIR), "code": memory_stats(CODE_MEMORY_DIR)}
+    logs = {"memory": log_stats(MEMORY_LOG), "code": log_stats(CODE_LOG)}
     system = system_stats()
-
-    subsystem_checks = [
-        llama,
-        qdrant,
-        memories["engineering"],
-        memories["code"],
-        logs["memory"],
-        logs["code"],
-        system,
-    ]
+    strict_checks = [llama, qdrant, memories["engineering"], memories["code"], system]
 
     return {
-        "ok": all(check.get("ok") for check in subsystem_checks),
-        "timestamp": iso_time(time.time()),
+        "ok": all(check.get("ok") for check in strict_checks),
+        "timestamp": now_iso(),
         "llama": llama,
         "qdrant": qdrant,
         "memories": memories,
         "system": system,
         "logs": logs,
+        "log_capture": LOG_CAPTURE,
+        "watchers": list_watchers(),
     }
+
+
+@app.get("/api/dashboard/files")
+def dashboard_files(scope: str) -> Dict[str, Any]:
+    return list_files(scope)
+
+
+@app.get("/api/dashboard/logs")
+def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
+    if source == "memory":
+        return read_last_lines(MEMORY_LOG)
+    if source == "code":
+        return read_last_lines(CODE_LOG)
+    if source == "dashboard":
+        with JOBS_LOCK:
+            lines = []
+            for job in JOBS.values():
+                lines.append(f"[{job['status']}] {job['name']} {job['id']}")
+                lines.extend(job.get("output", [])[-80:])
+            return {"ok": True, "error": None, "source": source, "lines": lines[-MAX_LOG_LINES:]}
+    if source == "watchers":
+        lines = []
+        with WATCHERS_LOCK:
+            for scope, watcher in WATCHERS.items():
+                lines.append(f"[{scope}] watcher")
+                lines.extend(watcher.get("output", [])[-160:])
+        return {"ok": True, "error": None, "source": source, "lines": lines[-MAX_LOG_LINES:]}
+    raise HTTPException(status_code=400, detail="source must be memory, code, dashboard, or watchers")
+
+
+@app.post("/api/dashboard/log-capture", dependencies=[Depends(require_admin_token)])
+def set_log_capture(req: LogCaptureRequest) -> Dict[str, Any]:
+    LOG_CAPTURE["enabled"] = req.enabled
+    return {"ok": True, "log_capture": LOG_CAPTURE}
+
+
+@app.post("/api/dashboard/upload", dependencies=[Depends(require_admin_token)])
+def upload_files(scope: str = Form(...), files: List[UploadFile] = File(...)) -> Dict[str, Any]:
+    root = scope_root(scope)
+    root.mkdir(parents=True, exist_ok=True)
+    saved = []
+    extracted = []
+
+    for upload in files:
+        result = save_upload(upload, root)
+        saved.append(result)
+        saved_path = root / result["path"]
+        if scope == "code" and saved_path.suffix.lower() == ".zip":
+            extracted.extend(extract_zip_safe(saved_path, root))
+
+    return {"ok": True, "scope": scope, "saved": saved, "extracted": extracted}
+
+
+@app.post("/api/dashboard/repos/clone", dependencies=[Depends(require_admin_token)])
+def clone_repo(req: CloneRequest) -> Dict[str, Any]:
+    if not req.repo_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Only HTTPS repo URLs are supported in the dashboard.")
+
+    repo_name = req.repo_name or infer_repo_name(req.repo_url)
+    destination = safe_join(CODE_MEMORY_DIR, repo_name)
+    if destination.exists() and not req.update_existing:
+        raise HTTPException(status_code=409, detail="Repository destination already exists.")
+
+    CODE_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    env = build_git_env(req.token)
+    if destination.exists() and req.update_existing:
+        command = ["git", "-C", str(destination), "pull", "--ff-only"]
+        name = f"git pull {repo_name}"
+    else:
+        command = ["git", "clone", req.repo_url, str(destination)]
+        name = f"git clone {repo_name}"
+
+    job = run_job(name=name, command=command, env=env, secrets=[req.token] if req.token else [])
+    return {"ok": True, "job": job, "destination": str(destination)}
+
+
+@app.post("/api/dashboard/index", dependencies=[Depends(require_admin_token)])
+def start_index(req: IndexRequest) -> Dict[str, Any]:
+    if req.scope == "engineering":
+        target = safe_join(ENGINEERING_MEMORY_DIR, req.target)
+        command = [PYTHON_BIN, str(INDEX_MEMORY_SCRIPT)] + ([] if target == ENGINEERING_MEMORY_DIR else [str(target)])
+        env = index_env("engineering-memory", ENGINEERING_MEMORY_DIR)
+        name = f"index engineering {req.target or 'all'}"
+    elif req.scope == "code":
+        target = safe_join(CODE_MEMORY_DIR, req.target)
+        command = [PYTHON_BIN, str(INDEX_CODE_SCRIPT), str(target)]
+        env = index_env("code-memory", CODE_MEMORY_DIR)
+        name = f"index code {req.target or 'all'}"
+    else:
+        raise HTTPException(status_code=400, detail="scope must be engineering or code")
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Index target does not exist.")
+
+    return {"ok": True, "job": run_job(name=name, command=command, env=env)}
+
+
+@app.get("/api/dashboard/jobs")
+def list_jobs() -> Dict[str, Any]:
+    with JOBS_LOCK:
+        jobs = [job_public(job) for job in JOBS.values()]
+    jobs.sort(key=lambda item: item.get("started_at") or "", reverse=True)
+    return {"ok": True, "jobs": jobs}
+
+
+@app.get("/api/dashboard/jobs/{job_id}")
+def get_job(job_id: str) -> Dict[str, Any]:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return {"ok": True, "job": job_public(job)}
+
+
+@app.post("/api/dashboard/watchers/{scope}/start", dependencies=[Depends(require_admin_token)])
+def start_watcher(scope: str) -> Dict[str, Any]:
+    if scope == "engineering":
+        script = WATCH_MEMORY_SCRIPT
+        watched_path = ENGINEERING_MEMORY_DIR
+        env = index_env("engineering-memory", ENGINEERING_MEMORY_DIR)
+        env["MEMORY_DIR"] = str(ENGINEERING_MEMORY_DIR)
+        env["INDEX_MEMORY_SCRIPT"] = str(INDEX_MEMORY_SCRIPT)
+    elif scope == "code":
+        script = WATCH_CODE_SCRIPT
+        watched_path = CODE_MEMORY_DIR
+        env = index_env("code-memory", CODE_MEMORY_DIR)
+        env["REPOS_ROOT"] = str(CODE_MEMORY_DIR)
+        env["INDEX_CODE_SCRIPT"] = str(INDEX_CODE_SCRIPT)
+    else:
+        raise HTTPException(status_code=400, detail="scope must be engineering or code")
+
+    if not watched_path.exists():
+        raise HTTPException(status_code=404, detail="Watched directory does not exist.")
+
+    with WATCHERS_LOCK:
+        existing = WATCHERS.get(scope)
+        if existing and existing.get("process") and existing["process"].poll() is None:
+            raise HTTPException(status_code=409, detail=f"{scope} watcher is already running.")
+
+        process = subprocess.Popen(
+            [PYTHON_BIN, str(script)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        watcher = {
+            "process": process,
+            "pid": process.pid,
+            "started_at": now_iso(),
+            "started_ts": time.time(),
+            "watched_path": str(watched_path),
+            "output": [],
+        }
+        WATCHERS[scope] = watcher
+
+    def reader() -> None:
+        assert process.stdout is not None
+        for line in process.stdout:
+            if LOG_CAPTURE["enabled"]:
+                watcher["output"].append(line.rstrip())
+                del watcher["output"][:-MAX_LOG_LINES]
+
+    threading.Thread(target=reader, daemon=True).start()
+    return {"ok": True, "watcher": watcher_public(scope, watcher)}
+
+
+@app.post("/api/dashboard/watchers/{scope}/stop", dependencies=[Depends(require_admin_token)])
+def stop_watcher(scope: str) -> Dict[str, Any]:
+    with WATCHERS_LOCK:
+        watcher = WATCHERS.get(scope)
+    if not watcher or not watcher.get("process") or watcher["process"].poll() is not None:
+        return {"ok": True, "watcher": {"scope": scope, "running": False}}
+
+    process = watcher["process"]
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+    return {"ok": True, "watcher": watcher_public(scope, watcher)}
+
+
+@app.get("/api/dashboard/watchers")
+def list_watchers() -> Dict[str, Any]:
+    with WATCHERS_LOCK:
+        return {
+            "ok": True,
+            "watchers": {
+                "engineering": watcher_public("engineering", WATCHERS.get("engineering")),
+                "code": watcher_public("code", WATCHERS.get("code")),
+            },
+        }
