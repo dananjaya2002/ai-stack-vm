@@ -5,12 +5,12 @@ retrieval-augmented generation over engineering notes and code repositories.
 
 The main entry point is the `./ai-stack` helper. It creates the runtime
 directories, writes local env files, downloads/points at a GGUF model, builds the
-Docker images, and starts the compose stack.
+container images, and starts the compose stack.
 
 ## Architecture
 
 ```text
-Docker host / VM
+Container host / VM
 |-- vm-llama      llama.cpp OpenAI-compatible server -> http://localhost:8082/v1
 |-- qdrant        vector database                    -> http://localhost:6333
 |-- memory-proxy  engineering-memory RAG proxy       -> http://localhost:9002/v1
@@ -40,8 +40,9 @@ $AI_STACK_HOME/
 ```
 
 The repository also has local placeholder folders (`models/`, `qdrant/`,
-`open-webui/`, `python-envs/`) with README files, but compose uses named Docker
-volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and memory.
+`open-webui/`, `python-envs/`) with README files, but compose uses named
+container volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and
+memory.
 
 ## Ports
 
@@ -59,7 +60,7 @@ volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and memory.
 ## Prerequisites
 
 - Bash-compatible shell, such as Linux, WSL, Git Bash, or a Linux VM.
-- Docker with Docker Compose plugin, or `docker-compose`.
+- Docker with Docker Compose, or Podman with `podman compose` / `podman-compose`.
 - `git`, `curl`, and `awk`.
 - Python 3.11+ if you want to run the indexing/search scripts directly on the
   host.
@@ -182,13 +183,21 @@ The recommended path is the helper:
 ./ai-stack status
 ```
 
-You can also use Docker Compose directly:
+You can also use Compose directly:
 
 ```bash
 docker compose up -d
 docker compose ps
 docker compose logs -f
 docker compose down
+```
+
+With Podman, use the matching compose command available on your VM:
+
+```bash
+podman compose up -d
+# or:
+podman-compose up -d
 ```
 
 Run only memory-proxy + Qdrant:
@@ -478,7 +487,7 @@ Legacy health script:
 bash health-check.sh
 ```
 
-Docker logs:
+Container logs:
 
 ```bash
 ./ai-stack logs all
@@ -506,7 +515,7 @@ Backups are written under `~/ai-stack/backups/` by the current script and older
 archives are pruned automatically.
 
 Review `backup-ai-stack.sh` before relying on it for production backups because
-some Docker data now lives in named volumes.
+some container data now lives in named volumes.
 
 ## Repository Layout
 

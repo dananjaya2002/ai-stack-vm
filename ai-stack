@@ -63,8 +63,12 @@ compose() {
     docker compose "$@"
   elif have docker-compose; then
     docker-compose "$@"
+  elif have podman && podman compose version >/dev/null 2>&1; then
+    podman compose "$@"
+  elif have podman-compose; then
+    podman-compose "$@"
   else
-    fail "Docker Compose was not found. Install Docker with the Compose plugin."
+    fail "Compose was not found. Install Docker Compose, podman-compose, or a Podman version with 'podman compose'."
   fi
 }
 
@@ -217,12 +221,22 @@ cmd_doctor() {
     warn "docker: missing"
   fi
 
+  if have podman; then
+    info "podman: $(podman --version)"
+  else
+    warn "podman: missing"
+  fi
+
   if have docker && docker compose version >/dev/null 2>&1; then
     info "docker compose: $(docker compose version)"
   elif have docker-compose; then
     info "docker-compose: $(docker-compose --version)"
+  elif have podman && podman compose version >/dev/null 2>&1; then
+    info "podman compose: $(podman compose version)"
+  elif have podman-compose; then
+    info "podman-compose: $(podman-compose --version)"
   else
-    warn "docker compose: missing"
+    warn "compose: missing"
   fi
 
   for port in 6333 8080 8082 9001 9002 9100; do
