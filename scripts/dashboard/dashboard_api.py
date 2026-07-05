@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 load_dotenv()
 load_dotenv(BASE_DIR / "dashboard.env", override=False)
@@ -49,6 +50,9 @@ MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
 
 app = FastAPI(title="AI Stack Dashboard")
+
+if (FRONTEND_DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -73,6 +77,11 @@ class IndexRequest(BaseModel):
 
 class LogCaptureRequest(BaseModel):
     enabled: bool
+
+
+class DeleteFileRequest(BaseModel):
+    scope: str
+    path: str
 
 
 def iso_time(timestamp: float) -> str:
@@ -519,6 +528,27 @@ def extract_zip_safe(zip_path: Path, destination_root: Path) -> List[str]:
     return extracted
 
 
+def delete_memory_file(scope: str, relative_path: str) -> Dict[str, Any]:
+    root = scope_root(scope)
+    target = safe_join(root, relative_path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File does not exist.")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Only files can be deleted.")
+
+    size_bytes = target.stat().st_size
+    target.unlink()
+
+    record_dashboard_event(
+        f"delete {scope}",
+        [
+            f"Deleted {relative_path} from {scope} memory.",
+            f"Size: {size_bytes} bytes",
+        ],
+    )
+    return {"ok": True, "scope": scope, "path": relative_path, "size_bytes": size_bytes}
+
+
 def watcher_public(scope: str, watcher: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not watcher:
         return {"scope": scope, "running": False}
@@ -535,9 +565,16 @@ def watcher_public(scope: str, watcher: Optional[Dict[str, Any]]) -> Dict[str, A
     }
 
 
+def dashboard_index_path() -> Path:
+    vite_index = FRONTEND_DIST_DIR / "index.html"
+    if vite_index.exists():
+        return vite_index
+    return STATIC_DIR / "index.html"
+
+
 @app.get("/")
 def dashboard_home() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(dashboard_index_path())
 
 
 @app.get("/api/dashboard/status")
@@ -565,6 +602,11 @@ def dashboard_status() -> Dict[str, Any]:
 @app.get("/api/dashboard/files")
 def dashboard_files(scope: str) -> Dict[str, Any]:
     return list_files(scope)
+
+
+@app.delete("/api/dashboard/files")
+def dashboard_delete_file(req: DeleteFileRequest) -> Dict[str, Any]:
+    return delete_memory_file(req.scope, req.path)
 
 
 @app.get("/api/dashboard/logs")
@@ -765,3 +807,10 @@ def list_watchers() -> Dict[str, Any]:
                 "code": watcher_public("code", WATCHERS.get("code")),
             },
         }
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def dashboard_spa_fallback(full_path: str) -> FileResponse:
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found.")
+    return FileResponse(dashboard_index_path())

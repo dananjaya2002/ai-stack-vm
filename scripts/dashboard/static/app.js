@@ -140,13 +140,23 @@ function renderFiles() {
     .filter((file) => file.path.toLowerCase().includes(filter))
     .map((file) => `
       <tr>
-        <td>${file.path}</td>
+        <td class="path-cell">${file.path}</td>
         <td>${file.extension || "file"}</td>
         <td>${formatBytes(file.size_bytes)}</td>
         <td>${file.modified_time}</td>
+        <td>
+          <button class="danger small" data-delete-file="${encodeURIComponent(file.path)}">Delete</button>
+        </td>
       </tr>
     `);
-  document.querySelector("#files-table").innerHTML = rows.join("");
+  document.querySelector("#files-table").innerHTML =
+    rows.join("") || `<tr><td colspan="5" class="empty-cell">No files found.</td></tr>`;
+  document.querySelectorAll("[data-delete-file]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const path = decodeURIComponent(button.dataset.deleteFile);
+      runAction(() => deleteFile(path), "File deleted.");
+    });
+  });
 }
 
 async function refreshFiles() {
@@ -155,6 +165,20 @@ async function refreshFiles() {
   state.files = data.files || [];
   renderFiles();
   markUpdated();
+}
+
+async function deleteFile(path) {
+  const scope = document.querySelector("#files-scope").value;
+  const confirmed = window.confirm(`Delete ${path} from ${scope} memory?`);
+  if (!confirmed) return;
+  await api("/api/dashboard/files", {
+    method: "DELETE",
+    headers: headers(),
+    body: JSON.stringify({ scope, path }),
+  });
+  await refreshFiles();
+  await refreshStatus();
+  await refreshLogs();
 }
 
 async function uploadFiles(event) {

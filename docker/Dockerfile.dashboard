@@ -1,3 +1,13 @@
+FROM docker.io/library/node:20-slim AS frontend-build
+
+WORKDIR /frontend
+
+COPY scripts/dashboard/frontend/package.json ./package.json
+RUN npm install
+
+COPY scripts/dashboard/frontend ./
+RUN npm run build
+
 FROM docker.io/library/python:3.11-slim
 
 WORKDIR /app
@@ -17,6 +27,7 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 COPY scripts/dashboard/dashboard_api.py ./dashboard_api.py
 COPY scripts/dashboard/static ./static
+COPY --from=frontend-build /frontend/dist ./frontend/dist
 COPY scripts/memory-proxy ./memory-proxy
 COPY scripts/watcher ./watcher
 

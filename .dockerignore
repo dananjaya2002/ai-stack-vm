@@ -10,3 +10,5 @@ python-envs
 **/*.pyc
 **/*.pyo
 **/*.pyd
+**/node_modules
+scripts/dashboard/frontend/dist

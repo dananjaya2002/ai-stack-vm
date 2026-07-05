@@ -337,10 +337,11 @@ curl http://localhost:9002/v1/models
 
 ## Dashboard Website
 
-The optional dashboard at `http://localhost:9100` provides a tabbed local UI for
-status, logs, memory files, uploads, repo cloning, indexing, and watcher control.
-Private Git repo clone/pull actions can use a one-time token entered in the
-Repositories tab; the token is not stored.
+The optional dashboard at `http://localhost:9100` provides a React/Vite tabbed
+local UI backed by FastAPI. It shows status, logs, memory files, uploads, repo
+cloning, indexing, watcher control, and lightweight Recharts history for system
+and llama metrics. Private Git repo clone/pull actions can use a one-time token
+entered in the Repositories tab; the token is not stored.
 
 Run or rebuild it as a container:
 
@@ -358,7 +359,7 @@ Tabs:
 
 - Overview: llama.cpp, Qdrant, memory folder, log, CPU, RAM, and disk status.
 - Logs: memory/code proxy logs plus dashboard job and watcher output, refreshed live.
-- Memory Files: browse engineering and code memory files.
+- Memory Files: browse and delete engineering or code memory files.
 - Upload: upload engineering memory files or code files/zip archives.
 - Repositories: clone public repos or private HTTPS repos with a one-time Git token.
 - Indexing: start full or targeted indexing jobs.
@@ -380,11 +381,36 @@ python3 -m venv python-envs/dashboard
 python-envs/dashboard/bin/pip install -r scripts/dashboard/requirements.txt
 ```
 
+Install frontend dependencies for React development:
+
+```bash
+cd scripts/dashboard/frontend
+npm install
+```
+
 Run directly from the service folder:
 
 ```bash
 cd scripts/dashboard
 ../../python-envs/dashboard/bin/uvicorn dashboard_api:app --host 0.0.0.0 --port 9100
+```
+
+Run the frontend dev server in another terminal:
+
+```bash
+cd scripts/dashboard/frontend
+npm run dev
+```
+
+The Vite dev server listens on `http://localhost:5173` and proxies `/api` calls
+to FastAPI on `http://localhost:9100`.
+
+Build the production frontend:
+
+```bash
+cd scripts/dashboard/frontend
+npm run typecheck
+npm run build
 ```
 
 Example status response:
@@ -538,7 +564,7 @@ ai-stack-vm/
 |-- scripts/
 |   |-- memory-proxy/
 |   |-- code-proxy/
-|   |-- dashboard/
+|   |-- dashboard/                  FastAPI dashboard + React/Vite frontend
 |   `-- watcher/
 |-- docs/
 |-- models/
