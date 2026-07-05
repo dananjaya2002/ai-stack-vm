@@ -13,14 +13,9 @@ const titles = {
   watchers: ["Watchers", "Start and stop automatic reindex watchers."],
 };
 
-function token() {
-  return localStorage.getItem("dashboardToken") || "";
-}
-
 function headers(json = true) {
   const result = {};
   if (json) result["Content-Type"] = "application/json";
-  if (token()) result["X-Dashboard-Token"] = token();
   return result;
 }
 
@@ -38,6 +33,15 @@ async function api(path, options = {}) {
     throw new Error(data.detail || data.error || `Request failed: ${response.status}`);
   }
   return data;
+}
+
+async function runAction(action, successMessage = "") {
+  try {
+    await action();
+    if (successMessage) showNotice(successMessage);
+  } catch (error) {
+    showNotice(error.message, "bad");
+  }
 }
 
 function formatBytes(value) {
@@ -145,15 +149,20 @@ async function uploadFiles(event) {
   const form = event.currentTarget;
   const formData = new FormData(form);
   const scope = formData.get("scope");
+  if (!formData.getAll("files").some((file) => file && file.name)) {
+    throw new Error("Choose at least one file to upload.");
+  }
   const response = await fetch(`/api/dashboard/upload?scope=${encodeURIComponent(scope)}`, {
     method: "POST",
-    headers: token() ? { "X-Dashboard-Token": token() } : {},
     body: formData,
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Upload failed");
   document.querySelector("#upload-result").textContent = JSON.stringify(data, null, 2);
-  showNotice("Upload complete.");
+  document.querySelector("#files-scope").value = scope;
+  await refreshFiles();
+  await refreshStatus();
+  form.reset();
 }
 
 async function cloneRepo(event) {
@@ -169,8 +178,7 @@ async function cloneRepo(event) {
     body: JSON.stringify(data),
   });
   document.querySelector("#clone-result").textContent = JSON.stringify(result, null, 2);
-  showNotice("Repository job started.");
-  refreshJobs();
+  await refreshJobs();
 }
 
 async function startIndex(event) {
@@ -183,7 +191,6 @@ async function startIndex(event) {
     headers: headers(),
     body: JSON.stringify(data),
   });
-  showNotice("Indexing job started.");
   document.querySelector("#jobs-list").prepend(jobCard(result.job));
 }
 
@@ -221,7 +228,6 @@ async function watcherAction(scope, action) {
     headers: headers(),
   });
   document.querySelector(`#watcher-${scope}`).textContent = JSON.stringify(data.watcher, null, 2);
-  showNotice(`${scope} watcher ${action === "start" ? "started" : "stopped"}.`);
 }
 
 function switchTab(tab) {
@@ -237,31 +243,45 @@ function switchTab(tab) {
 }
 
 function bind() {
-  document.querySelector("#admin-token").value = token();
-  document.querySelector("#save-token").addEventListener("click", () => {
-    localStorage.setItem("dashboardToken", document.querySelector("#admin-token").value);
-    showNotice("Admin token saved in this browser.");
-  });
   document.querySelectorAll(".tab-button").forEach((button) => {
     button.addEventListener("click", () => switchTab(button.dataset.tab));
   });
-  document.querySelector("#refresh-status").addEventListener("click", refreshStatus);
-  document.querySelector("#refresh-logs").addEventListener("click", refreshLogs);
-  document.querySelector("#log-source").addEventListener("change", refreshLogs);
-  document.querySelector("#log-capture").addEventListener("change", setLogCapture);
-  document.querySelector("#refresh-files").addEventListener("click", refreshFiles);
-  document.querySelector("#files-scope").addEventListener("change", refreshFiles);
+  document.querySelector("#refresh-current").addEventListener("click", () => runAction(refreshCurrentTab));
+  document.querySelector("#refresh-status").addEventListener("click", () => runAction(refreshStatus));
+  document.querySelector("#refresh-logs").addEventListener("click", () => runAction(refreshLogs));
+  document.querySelector("#log-source").addEventListener("change", () => runAction(refreshLogs));
+  document.querySelector("#log-capture").addEventListener("change", () => runAction(setLogCapture));
+  document.querySelector("#refresh-files").addEventListener("click", () => runAction(refreshFiles));
+  document.querySelector("#files-scope").addEventListener("change", () => runAction(refreshFiles));
   document.querySelector("#files-filter").addEventListener("input", renderFiles);
-  document.querySelector("#upload-form").addEventListener("submit", uploadFiles);
-  document.querySelector("#clone-form").addEventListener("submit", cloneRepo);
-  document.querySelector("#index-form").addEventListener("submit", startIndex);
-  document.querySelector("#refresh-jobs").addEventListener("click", refreshJobs);
+  document.querySelector("#upload-form").addEventListener("submit", (event) => {
+    runAction(() => uploadFiles(event), "Upload complete.");
+  });
+  document.querySelector("#clone-form").addEventListener("submit", (event) => {
+    runAction(() => cloneRepo(event), "Repository job started.");
+  });
+  document.querySelector("#index-form").addEventListener("submit", (event) => {
+    runAction(() => startIndex(event), "Indexing job started.");
+  });
+  document.querySelector("#refresh-jobs").addEventListener("click", () => runAction(refreshJobs));
   document.querySelectorAll("[data-watch-start]").forEach((button) => {
-    button.addEventListener("click", () => watcherAction(button.dataset.watchStart, "start"));
+    button.addEventListener("click", () => {
+      runAction(() => watcherAction(button.dataset.watchStart, "start"), `${button.dataset.watchStart} watcher started.`);
+    });
   });
   document.querySelectorAll("[data-watch-stop]").forEach((button) => {
-    button.addEventListener("click", () => watcherAction(button.dataset.watchStop, "stop"));
+    button.addEventListener("click", () => {
+      runAction(() => watcherAction(button.dataset.watchStop, "stop"), `${button.dataset.watchStop} watcher stopped.`);
+    });
   });
+}
+
+async function refreshCurrentTab() {
+  if (state.currentTab === "overview") await refreshStatus();
+  if (state.currentTab === "logs") await refreshLogs();
+  if (state.currentTab === "files") await refreshFiles();
+  if (state.currentTab === "indexing") await refreshJobs();
+  if (state.currentTab === "watchers") await refreshWatchers();
 }
 
 window.addEventListener("DOMContentLoaded", async () => {

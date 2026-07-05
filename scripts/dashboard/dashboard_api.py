@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import psutil
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -44,7 +44,6 @@ WATCH_MEMORY_SCRIPT = Path(os.getenv("WATCH_MEMORY_SCRIPT", "/app/memory-proxy/w
 WATCH_CODE_SCRIPT = Path(os.getenv("WATCH_CODE_SCRIPT", "/app/watcher/watch_code.py"))
 PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 
-ADMIN_TOKEN = os.getenv("DASHBOARD_ADMIN_TOKEN", "")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
 MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
@@ -86,13 +85,6 @@ def now_iso() -> str:
 
 def error_payload(message: str, **extra: Any) -> Dict[str, Any]:
     return {"ok": False, "error": message, **extra}
-
-
-def require_admin_token(x_dashboard_token: Optional[str] = Header(default=None)) -> None:
-    if not ADMIN_TOKEN:
-        raise HTTPException(status_code=503, detail="DASHBOARD_ADMIN_TOKEN is not configured.")
-    if x_dashboard_token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid dashboard token.")
 
 
 def get_json(url: str) -> Dict[str, Any]:
@@ -381,6 +373,24 @@ def job_public(job: Dict[str, Any]) -> Dict[str, Any]:
     return public
 
 
+def record_dashboard_event(name: str, lines: List[str]) -> None:
+    if not LOG_CAPTURE["enabled"]:
+        return
+    job_id = str(uuid.uuid4())
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "id": job_id,
+            "name": name,
+            "status": "succeeded",
+            "command": [],
+            "started_at": now_iso(),
+            "finished_at": now_iso(),
+            "duration_seconds": 0,
+            "exit_code": 0,
+            "output": lines[-MAX_LOG_LINES:],
+        }
+
+
 def run_job(name: str, command: List[str], env: Optional[Dict[str, str]] = None, cwd: Optional[Path] = None, secrets: Optional[List[str]] = None) -> Dict[str, Any]:
     job_id = str(uuid.uuid4())
     job = {
@@ -580,13 +590,13 @@ def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
     raise HTTPException(status_code=400, detail="source must be memory, code, dashboard, or watchers")
 
 
-@app.post("/api/dashboard/log-capture", dependencies=[Depends(require_admin_token)])
+@app.post("/api/dashboard/log-capture")
 def set_log_capture(req: LogCaptureRequest) -> Dict[str, Any]:
     LOG_CAPTURE["enabled"] = req.enabled
     return {"ok": True, "log_capture": LOG_CAPTURE}
 
 
-@app.post("/api/dashboard/upload", dependencies=[Depends(require_admin_token)])
+@app.post("/api/dashboard/upload")
 def upload_files(scope: str = Form(...), files: List[UploadFile] = File(...)) -> Dict[str, Any]:
     root = scope_root(scope)
     root.mkdir(parents=True, exist_ok=True)
@@ -600,10 +610,19 @@ def upload_files(scope: str = Form(...), files: List[UploadFile] = File(...)) ->
         if scope == "code" and saved_path.suffix.lower() == ".zip":
             extracted.extend(extract_zip_safe(saved_path, root))
 
+    record_dashboard_event(
+        f"upload {scope}",
+        [
+            f"Uploaded {len(saved)} file(s) to {scope} memory.",
+            *[f"{item['path']} ({item['size_bytes']} bytes)" for item in saved],
+            *[f"extracted: {path}" for path in extracted],
+        ],
+    )
+
     return {"ok": True, "scope": scope, "saved": saved, "extracted": extracted}
 
 
-@app.post("/api/dashboard/repos/clone", dependencies=[Depends(require_admin_token)])
+@app.post("/api/dashboard/repos/clone")
 def clone_repo(req: CloneRequest) -> Dict[str, Any]:
     if not req.repo_url.startswith("https://"):
         raise HTTPException(status_code=400, detail="Only HTTPS repo URLs are supported in the dashboard.")
@@ -626,7 +645,7 @@ def clone_repo(req: CloneRequest) -> Dict[str, Any]:
     return {"ok": True, "job": job, "destination": str(destination)}
 
 
-@app.post("/api/dashboard/index", dependencies=[Depends(require_admin_token)])
+@app.post("/api/dashboard/index")
 def start_index(req: IndexRequest) -> Dict[str, Any]:
     if req.scope == "engineering":
         target = safe_join(ENGINEERING_MEMORY_DIR, req.target)
@@ -664,7 +683,7 @@ def get_job(job_id: str) -> Dict[str, Any]:
     return {"ok": True, "job": job_public(job)}
 
 
-@app.post("/api/dashboard/watchers/{scope}/start", dependencies=[Depends(require_admin_token)])
+@app.post("/api/dashboard/watchers/{scope}/start")
 def start_watcher(scope: str) -> Dict[str, Any]:
     if scope == "engineering":
         script = WATCH_MEMORY_SCRIPT
@@ -718,7 +737,7 @@ def start_watcher(scope: str) -> Dict[str, Any]:
     return {"ok": True, "watcher": watcher_public(scope, watcher)}
 
 
-@app.post("/api/dashboard/watchers/{scope}/stop", dependencies=[Depends(require_admin_token)])
+@app.post("/api/dashboard/watchers/{scope}/stop")
 def stop_watcher(scope: str) -> Dict[str, Any]:
     with WATCHERS_LOCK:
         watcher = WATCHERS.get(scope)

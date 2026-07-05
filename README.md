@@ -339,18 +339,13 @@ curl http://localhost:9002/v1/models
 
 The optional dashboard at `http://localhost:9100` provides a tabbed local UI for
 status, logs, memory files, uploads, repo cloning, indexing, and watcher control.
-Write/control actions require the generated dashboard admin token.
+Private Git repo clone/pull actions can use a one-time token entered in the
+Repositories tab; the token is not stored.
 
 Run or rebuild it as a container:
 
 ```bash
 ./ai-stack dashboard
-```
-
-Find the token:
-
-```bash
-grep DASHBOARD_ADMIN_TOKEN scripts/dashboard/dashboard.env
 ```
 
 Open:
@@ -365,7 +360,7 @@ Tabs:
 - Logs: memory/code proxy logs plus dashboard job and watcher output.
 - Memory Files: browse engineering and code memory files.
 - Upload: upload engineering memory files or code files/zip archives.
-- Repositories: clone public repos or private HTTPS repos with a one-time token.
+- Repositories: clone public repos or private HTTPS repos with a one-time Git token.
 - Indexing: start full or targeted indexing jobs.
 - Watchers: start/stop automatic engineering and code reindex watchers.
 
@@ -373,12 +368,6 @@ Status remains available as JSON:
 
 ```bash
 curl http://localhost:9100/api/dashboard/status
-```
-
-Write/control API calls require:
-
-```text
-X-Dashboard-Token: <DASHBOARD_ADMIN_TOKEN>
 ```
 
 Install requirements for host-run mode:

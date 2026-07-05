@@ -391,16 +391,9 @@ EOF
 }
 
 write_dashboard_env() {
-  local token
   mkdir -p "${ROOT_DIR}/scripts/dashboard"
 
   if [[ ! -f "${ROOT_DIR}/scripts/dashboard/dashboard.env" ]]; then
-    if have openssl; then
-      token="$(openssl rand -hex 24)"
-    else
-      token="change-me-$(date +%s)"
-    fi
-
     cat > "${ROOT_DIR}/scripts/dashboard/dashboard.env" <<'EOF'
 LLAMA_BASE_URL=http://vm-llama:8082/v1
 QDRANT_URL=http://qdrant:6333
@@ -411,20 +404,9 @@ CODE_MEMORY_DIR=/memory/code-memory
 MEMORY_LOG=/logs/memory/memory_api.log
 CODE_LOG=/logs/code/code_proxy.log
 EOF
-    printf 'DASHBOARD_ADMIN_TOKEN=%s\n' "${token}" >> "${ROOT_DIR}/scripts/dashboard/dashboard.env"
     info "created scripts/dashboard/dashboard.env"
-    info "dashboard admin token: ${token}"
   else
     info "scripts/dashboard/dashboard.env already exists"
-    if ! grep -q '^DASHBOARD_ADMIN_TOKEN=' "${ROOT_DIR}/scripts/dashboard/dashboard.env"; then
-      if have openssl; then
-        token="$(openssl rand -hex 24)"
-      else
-        token="change-me-$(date +%s)"
-      fi
-      printf 'DASHBOARD_ADMIN_TOKEN=%s\n' "${token}" >> "${ROOT_DIR}/scripts/dashboard/dashboard.env"
-      info "added dashboard admin token: ${token}"
-    fi
   fi
 }
 
