@@ -1,0 +1,22 @@
+services:
+  dashboard:
+    image: ai-stack/dashboard
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dashboard
+    container_name: ai-stack-dashboard
+    env_file:
+      - path: scripts/dashboard/dashboard.env
+        required: false
+    ports:
+      - "9100:9100"
+    volumes:
+      - ${AI_STACK_HOME}/memory/engineering-memory:/memory/engineering-memory:ro
+      - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory:ro
+      - memory_logs:/logs/memory:ro
+      - code_logs:/logs/code:ro
+    restart: unless-stopped
+
+volumes:
+  memory_logs:
+  code_logs:

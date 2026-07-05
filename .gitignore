@@ -29,3 +29,4 @@ open-webui/*
 *.env
 !.example.memory-api.env
 !.example.code-proxy.env
+!.example.dashboard.env

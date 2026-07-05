@@ -1,82 +1,76 @@
-# AI Stack VM — Private Local RAG System
+# AI Stack VM - Private Local RAG System
 
-A self-hosted, private AI assistant platform running across a laptop GPU and a VM (OpenShift/KubeVirt).
-Provides repo-aware code generation, long-term memory via Qdrant, and OpenAI-compatible endpoints for Continue.dev and Open WebUI.
+A self-hosted AI assistant stack for local model serving, Open WebUI, and
+retrieval-augmented generation over engineering notes and code repositories.
 
----
+The main entry point is the `./ai-stack` helper. It creates the runtime
+directories, writes local env files, downloads/points at a GGUF model, builds the
+Docker images, and starts the compose stack.
 
 ## Architecture
 
-```
-Laptop
-├── Docker / NVIDIA RTX 3050 GPU
-├── llama.cpp CUDA server         → qwen2.5-coder-3B  @ localhost:8081
-└── Continue.dev (VS Code)
-
-VM (OpenShift / KubeVirt)
-├── Podman
-├── llama.cpp CPU server          → qwen2.5-coder-7B  @ localhost:8082  (vm-llama)
-├── Qdrant vector database        →                    @ localhost:6333
-├── memory-proxy (FastAPI / RAG)  →                    @ localhost:9002  ← engineering-memory
-├── code-proxy   (FastAPI / RAG)  →                    @ localhost:9001  ← code-memory
-└── Open WebUI                   →                    @ localhost:8080
+```text
+Docker host / VM
+|-- vm-llama      llama.cpp OpenAI-compatible server -> http://localhost:8082/v1
+|-- qdrant        vector database                    -> http://localhost:6333
+|-- memory-proxy  engineering-memory RAG proxy       -> http://localhost:9002/v1
+|-- code-proxy    code-memory RAG proxy              -> http://localhost:9001/v1
+|-- open-webui    browser chat UI                    -> http://localhost:8080
+`-- dashboard     stack status API                   -> http://localhost:9100
 ```
 
-### Memory directory layout (on VM)
+Optional laptop flow:
 
-```
-~/ai-stack/memory/
-├── engineering-memory/     ← markdown notes, architecture docs, personas
-│   ├── architecture/
-│   ├── debugging-notes/
-│   └── persons/
-└── code-memory/            ← synced/cloned project repos for code RAG
-    ├── my-project/
-    └── another-repo/
+```text
+Laptop Continue.dev / browser
+  -> localhost ports, direct VM access, or OpenShift port-forward
+  -> vm-llama / memory-proxy / code-proxy / Open WebUI
 ```
 
-### Request flow
+## Runtime Data Layout
 
-```
-User prompt
-    ↓
-memory-proxy / code-proxy
-    ↓  embed query
-Qdrant (retrieves relevant chunks)
-    ↓  build enriched prompt
-llama.cpp VM model (qwen2.5-coder-7B @ :8082)
-    ↓
-Response → Open WebUI / Continue.dev
+By default `./ai-stack init` uses `AI_STACK_HOME=$HOME/ai-stack`.
+
+```text
+$AI_STACK_HOME/
+|-- models/                         GGUF model files
+`-- memory/
+    |-- engineering-memory/          markdown notes, architecture docs, personas
+    `-- code-memory/                 cloned or synced project repos for code RAG
 ```
 
----
+The repository also has local placeholder folders (`models/`, `qdrant/`,
+`open-webui/`, `python-envs/`) with README files, but compose uses named Docker
+volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and memory.
 
-## Port Reference
+## Ports
 
-| Service           | Port  | Notes                              |
-|-------------------|-------|-------------------------------------|
-| laptop-llama      | 8081  | GPU fast coder (3B)                |
-| vm-llama          | 8082  | VM deep coder (7B)                 |
-| Qdrant REST       | 6333  | Vector database                    |
-| Qdrant gRPC       | 6334  | Vector database (gRPC)             |
-| Open WebUI        | 8080  | Browser chat UI                    |
-| **code-proxy**    | 9001  | Code-RAG OpenAI-compatible proxy   |
-| **memory-proxy**  | 9002  | Memory-RAG OpenAI-compatible proxy |
-
----
+| Service | Port | Notes |
+|---|---:|---|
+| Open WebUI | 8080 | Browser chat UI |
+| laptop-llama | 8081 | Optional laptop GPU model |
+| vm-llama | 8082 | llama.cpp server from `docker-compose.yml` |
+| Qdrant REST | 6333 | Vector database |
+| Qdrant gRPC | 6334 | Qdrant default gRPC port, not published by current compose |
+| code-proxy | 9001 | OpenAI-compatible code RAG proxy |
+| memory-proxy | 9002 | OpenAI-compatible memory RAG proxy |
+| dashboard API | 9100 | Optional stack status API |
 
 ## Prerequisites
 
-- VM: Podman installed and running
-- Laptop: Docker + NVIDIA Container Toolkit
-- Python 3.11+ for local scripts (optional)
-- OpenShift `oc` CLI (for port-forwarding from VM)
+- Bash-compatible shell, such as Linux, WSL, Git Bash, or a Linux VM.
+- Docker with Docker Compose plugin, or `docker-compose`.
+- `git`, `curl`, and `awk`.
+- Python 3.11+ if you want to run the indexing/search scripts directly on the
+  host.
+- Optional: OpenShift `oc` CLI for port-forwarding from an OpenShift/KubeVirt VM.
 
----
+## Quick Start
 
-## CLI Quick Start
+For a personal laptop-class profile, such as 12 cores, 16 GB RAM, and about 6 GB
+VRAM, the helper defaults to:
 
-For a personal laptop-class machine, such as 12 cores, 16 GB RAM, and 6 GB VRAM, the repo CLI defaults to `Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf`.
+`Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf`
 
 ```bash
 git clone <repo-url> ai-stack-vm
@@ -92,12 +86,21 @@ chmod +x ./ai-stack
 ./ai-stack status
 ```
 
-For the larger 60-core / 40 GB RAM VM profile:
+For an OpenShift/VM-style 16 CPU profile:
+
+```bash
+./ai-stack profile vm16
+./ai-stack model download
+./ai-stack build
+./ai-stack up
+```
+
+For the larger 60-core / 40 GB RAM profile:
 
 ```bash
 ./ai-stack profile vm60
-# Edit MODEL_URL in .env for the larger GGUF before downloading.
-./ai-stack model download
+# Edit MODEL_URL in .env, or pass the larger GGUF URL directly:
+./ai-stack model download <model-url>
 ./ai-stack build
 ./ai-stack up
 ```
@@ -105,329 +108,327 @@ For the larger 60-core / 40 GB RAM VM profile:
 Useful daily commands:
 
 ```bash
+./ai-stack status
 ./ai-stack logs llama
 ./ai-stack logs code
+./ai-stack logs memory
+./ai-stack restart
+./ai-stack down
+```
+
+## CLI Reference
+
+```text
+./ai-stack doctor
+./ai-stack init
+./ai-stack profile laptop|vm16|vm60
+./ai-stack model list
+./ai-stack model path
+./ai-stack model use <file.gguf>
+./ai-stack model download [url]
+./ai-stack build
+./ai-stack up
+./ai-stack dashboard
 ./ai-stack down
 ./ai-stack restart
+./ai-stack status
+./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|all]
+./ai-stack index memory
+./ai-stack index code <repo-path>
+./ai-stack search code "query"
+./ai-stack search memory "query"
 ```
 
----
+## Configuration
 
-## Setup
+`./ai-stack init` creates:
 
-### 1. Clone and prepare folders (on VM)
+- `.env`
+- `scripts/code-proxy/code-proxy.env`
+- `scripts/memory-proxy/memory-api.env`
+- `$AI_STACK_HOME/models`
+- `$AI_STACK_HOME/memory/code-memory`
+- `$AI_STACK_HOME/memory/engineering-memory`
 
-```bash
-mkdir -p ~/ai-stack/{open-webui,qdrant,python-envs,logs,backups}
-mkdir -p ~/ai-stack/memory/engineering-memory/{architecture,debugging-notes,persons}
-mkdir -p ~/ai-stack/memory/code-memory
-git clone <repo-url> ~/ai-stack/repos/ai-stack-vm
+The generated `.env` controls the model path and llama.cpp runtime settings:
+
+```env
+AI_STACK_HOME=/home/ubuntu/ai-stack
+MODEL_FILE=Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf
+MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf
+MODEL_SHA256=
+
+LLAMA_THREADS=6
+LLAMA_CONTEXT=8192
+LLAMA_BATCH=512
+LLAMA_UBATCH=256
+LLAMA_CPU_LIMIT=8
+LLAMA_MEMORY_LIMIT=14gb
+LLAMA_CPU_RESERVATION=4
+LLAMA_MEMORY_RESERVATION=8gb
 ```
 
-### 2. Copy env files and fill in values
-
-```bash
-cp scripts/memory-proxy/.example.memory-api.env scripts/memory-proxy/memory-api.env
-cp scripts/code-proxy/.example.code-proxy.env scripts/code-proxy/code-proxy.env
-cp scripts/watcher/.example.watcher.env scripts/watcher/watcher.env
-# Edit each file with real values (LLM_BASE_URL, Qdrant settings, etc.)
-nano scripts/memory-proxy/memory-api.env
-nano scripts/code-proxy/code-proxy.env
-nano scripts/watcher/watcher.env
-```
-
-### 3. Build Docker images
-
-Images are built in layers. Build the shared base images first, then the service images on top.
-
-```bash
-# ── Proxy images ──────────────────────────────────────────
-# 1. Shared base (Python deps + embedding model pre-downloaded)
-docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
-
-# 2. memory-proxy  (port 9002)
-docker build -f docker/Dockerfile.memory-proxy -t ai-stack/memory-proxy .
-
-# 3. code-proxy    (port 9001)
-docker build -f docker/Dockerfile.code-proxy -t ai-stack/code-proxy .
-
-# ── Watcher images ────────────────────────────────────────
-# 4. Watcher base (lightweight watchdog deps)
-docker build -f docker/Dockerfile.watcher-base -t ai-stack/watcher-deps .
-
-# 5. Watcher service (file-system watcher that auto-indexes code)
-docker build -f docker/Dockerfile.watcher -t ai-stack/watcher .
-```
-
-#### Docker image hierarchy
-
-```
-python:3.11-slim
-├── ai-stack/base-deps        (Dockerfile.base)
-│   ├── ai-stack/memory-proxy (Dockerfile.memory-proxy)
-│   └── ai-stack/code-proxy   (Dockerfile.code-proxy)
-└── ai-stack/watcher-deps     (Dockerfile.watcher-base)
-    └── ai-stack/watcher      (Dockerfile.watcher)
-```
-
----
+Real `.env` files are ignored by Git. The templates committed to the repo are
+`.env.example`, `scripts/code-proxy/.example.code-proxy.env`, and
+`scripts/memory-proxy/.example.memory-api.env`, and `.example.dashboard.env`.
 
 ## Running Services
 
-### Option A — Run everything together (master compose)
+The recommended path is the helper:
 
 ```bash
-# Start Qdrant + memory-proxy + code-proxy
-docker compose up -d
-
-# Stop all
-docker compose down
-
-# View logs
-docker compose logs -f
+./ai-stack build
+./ai-stack up
+./ai-stack status
 ```
 
-### Option B — Run services independently
+You can also use Docker Compose directly:
 
 ```bash
-# Qdrant + memory-proxy only
-docker compose -f docker-compose.memory-proxy.yml up -d
+docker compose up -d
+docker compose ps
+docker compose logs -f
+docker compose down
+```
 
-# Qdrant + code-proxy only
+Run only memory-proxy + Qdrant:
+
+```bash
+docker compose -f docker-compose.memory-proxy.yml up -d
+```
+
+Run only code-proxy + Qdrant:
+
+```bash
 docker compose -f docker-compose.code-proxy.yml up -d
 ```
 
-### Resource limits (master compose)
-
-Each service in `docker-compose.yml` has explicit CPU and memory limits tuned for the VM:
-
-| Service      | CPU limit | Memory limit | CPU request | Memory request |
-|--------------|-----------|--------------|-------------|----------------|
-| qdrant       | 8 cores   | 10 GB        | 4 cores     | 4 GB           |
-| memory-proxy | 8 cores   | 12 GB        | 4 cores     | 6 GB           |
-| code-proxy   | 16 cores  | 20 GB        | 8 cores     | 10 GB          |
-
-> ℹ️ `requests` are soft reservations; `limits` are hard caps enforced by the container runtime.
-
-### vm-llama (Podman on VM)
+Run the optional dashboard API:
 
 ```bash
-# Start vm-llama (should be managed by systemd, see below)
-podman start vm-llama
-
-# Check status
-podman ps
-
-# Logs
-podman logs -f vm-llama
+./ai-stack dashboard
+curl http://localhost:9100/api/dashboard/status
 ```
 
-### Laptop GPU model
+Note: the split compose files are older convenience files. The main
+`docker-compose.yml` is the source of truth used by `./ai-stack`.
+
+## Compose Services And Limits
+
+Current `docker-compose.yml` services:
+
+| Service | CPU limit | Memory limit | CPU reservation | Memory reservation |
+|---|---:|---:|---:|---:|
+| qdrant | 6 | 6 GB | 2 | 2 GB |
+| memory-proxy | 4 | 4 GB | 1 | 2 GB |
+| code-proxy | 6 | 4 GB | 2 | 2 GB |
+| vm-llama | from `.env` | from `.env` | from `.env` | from `.env` |
+| open-webui | 2 | 3 GB | 1 | 1 GB |
+
+Profiles update the `vm-llama` values in `.env`:
+
+| Profile | Model | Threads | Context | CPU limit | Memory limit |
+|---|---|---:|---:|---:|---:|
+| laptop | Qwen2.5-Coder 3B Q4_K_M | 6 | 8192 | 8 | 12 GB |
+| vm16 | Qwen2.5-Coder 3B Q4_K_M | 8 | 8192 | 8 | 14 GB |
+| vm60 | custom large GGUF | 54 | 12288 | 54 | 38 GB |
+
+## Memory RAG
+
+Put markdown notes under:
+
+```text
+$AI_STACK_HOME/memory/engineering-memory
+```
+
+Index memory:
 
 ```bash
-# Start laptop-llama container (run on your laptop)
-docker start laptop-llama
-
-# Logs
-docker logs -f laptop-llama
+./ai-stack index memory
 ```
 
----
-
-## systemd Services (VM)
-
-The VM model is managed as a systemd user service so it auto-starts on boot.
+Or run the script directly:
 
 ```bash
-# Check status
-systemctl --user status container-vm-llama.service
-
-# Start / stop / restart
-systemctl --user start  container-vm-llama.service
-systemctl --user stop   container-vm-llama.service
-systemctl --user restart container-vm-llama.service
-
-# Enable auto-start on boot
-systemctl --user enable container-vm-llama.service
+python3 scripts/memory-proxy/index_memory.py
+python3 scripts/memory-proxy/index_memory.py "$AI_STACK_HOME/memory/engineering-memory/persons/my-note.md"
 ```
 
-For the memory file auto-indexing watcher:
+Search/debug memory:
 
 ```bash
-systemctl --user status  memory-watcher.service
-systemctl --user start   memory-watcher.service
-systemctl --user enable  memory-watcher.service
+./ai-stack search memory "what do we know about deployment?"
+python3 scripts/memory-proxy/search_memory.py "deployment"
 ```
 
----
-
-## OpenShift Port Forwarding
-
-To access the VM model from your laptop:
+Run the memory watcher directly:
 
 ```bash
-oc port-forward pod/virt-launcher-vm-ai-<pod-id> 8082:8082
+python3 scripts/memory-proxy/watch_memory.py
 ```
 
-This makes `http://localhost:8082/v1` available on the laptop, pointing to the VM's llama.cpp server.
+The `memory-proxy` container does not run the watcher. Run `watch_memory.py`
+separately if you want automatic re-indexing on file changes.
 
----
+## Code RAG
 
-## Memory System
+Clone or sync repos into:
 
-### Index memory files manually
+```text
+$AI_STACK_HOME/memory/code-memory/<repo-name>
+```
+
+Index a repo:
 
 ```bash
-# Index all engineering-memory files
-python scripts/memory-proxy/index_memory.py
-
-# Index a single file (incremental)
-python scripts/memory-proxy/index_memory.py ~/ai-stack/memory/engineering-memory/persons/my-note.md
+./ai-stack index code "$AI_STACK_HOME/memory/code-memory/<repo-name>"
 ```
 
-### Search memory (debug)
+Index a specific file:
 
 ```bash
-python scripts/memory-proxy/search_memory.py
+python3 scripts/watcher/index_code.py "$AI_STACK_HOME/memory/code-memory/<repo-name>/src/main.py"
 ```
 
-### Run memory watcher (auto-index on file save)
+Search/debug code:
 
 ```bash
-# Watches ~/ai-stack/memory/engineering-memory/ and re-indexes any file that changes
-python scripts/memory-proxy/watch_memory.py
+./ai-stack search code "where is authentication handled?"
+python3 scripts/code-proxy/search_code.py "authentication"
 ```
 
-> ℹ️ The `memory-proxy` container does **not** run the watcher. Run `watch_memory.py` separately or use the `memory-watcher.service` systemd unit.
-
-### Ask a question via memory RAG (CLI)
+Run the code watcher directly:
 
 ```bash
-python scripts/memory-proxy/ask_with_memory.py
+python3 scripts/watcher/watch_code.py "$AI_STACK_HOME/memory/code-memory"
 ```
 
----
+## API Endpoints
 
-## Code Memory System
+Both proxies expose OpenAI-compatible chat and model endpoints:
 
-### Index a project repo
+```text
+GET  /v1/models
+POST /v1/chat/completions
+```
+
+They also expose debug/helper endpoints:
+
+```text
+POST /search
+POST /ask
+```
+
+Example:
 
 ```bash
-# Clone/copy your project into code-memory first
-git clone <project-url> ~/ai-stack/memory/code-memory/<repo-name>
-# or rsync from laptop:
-rsync -av /path/to/local/project/ vm-host:~/ai-stack/memory/code-memory/<repo-name>/
-
-# Then index it into Qdrant
-python scripts/watcher/index_code.py ~/ai-stack/memory/code-memory/<repo-name>
+curl http://localhost:9001/v1/models
+curl http://localhost:9002/v1/models
 ```
 
-### Index a specific file
+## Dashboard API
+
+The optional dashboard API gives a quick JSON status snapshot for llama.cpp,
+Qdrant, engineering/code memory folders, proxy logs, and CPU/RAM/disk usage.
+
+Run it as a container:
 
 ```bash
-python scripts/watcher/index_code.py ~/ai-stack/memory/code-memory/<repo-name>/src/main.py
+./ai-stack dashboard
 ```
 
-### Search code chunks (debug)
+Install requirements for host-run mode:
 
 ```bash
-python scripts/watcher/search_code.py
+python3 -m venv python-envs/dashboard
+python-envs/dashboard/bin/pip install -r scripts/dashboard/requirements.txt
 ```
 
-### Run code watcher (auto-index on save)
+Run directly from the service folder:
 
 ```bash
-# Watches ~/ai-stack/memory/code-memory and re-indexes on any file change
-python scripts/watcher/watch_code.py ~/ai-stack/memory/code-memory
+cd scripts/dashboard
+../../python-envs/dashboard/bin/uvicorn dashboard_api:app --host 0.0.0.0 --port 9100
 ```
 
-Alternatively, run the watcher as a Docker container:
+Query status:
 
 ```bash
-docker run -d --name watcher \
-  --env-file scripts/watcher/watcher.env \
-  -v ~/ai-stack/memory/code-memory:/memory/code-memory:ro \
-  ai-stack/watcher
+curl http://localhost:9100/api/dashboard/status
 ```
 
----
+Example response:
 
-## Health Check
-
-```bash
-bash health-check.sh
+```json
+{
+  "ok": false,
+  "timestamp": "2026-07-05T09:15:20.120000+00:00",
+  "llama": {
+    "ok": true,
+    "latency_ms": 42.1,
+    "approximate_token_speed": {
+      "tokens_per_second": 18.4,
+      "source": "completion_tokens / wall latency",
+      "note": "Approximate wall-clock estimate; llama.cpp timing fields were not present."
+    }
+  },
+  "qdrant": {
+    "ok": true,
+    "latency_ms": 12.5
+  },
+  "memories": {
+    "engineering": {
+      "ok": true,
+      "file_count": 18,
+      "latest_modified_time": "2026-07-05T08:50:12+00:00"
+    },
+    "code": {
+      "ok": true,
+      "file_count": 240,
+      "latest_modified_time": "2026-07-05T08:55:02+00:00"
+    }
+  },
+  "system": {
+    "ok": true,
+    "cpu": { "usage_percent": 14.2 },
+    "ram": { "usage_percent": 63.8 },
+    "disk": { "usage_percent": 71.4 }
+  },
+  "logs": {
+    "memory": { "ok": false, "exists": false },
+    "code": { "ok": false, "exists": false }
+  }
+}
 ```
 
-Checks:
-- vm-llama health endpoint (`:8082`)
-- vm-llama models endpoint
-- Open WebUI availability
-- Running Podman containers
-- systemd user service status
+## Open WebUI
 
----
+After the stack is up, open:
 
-## Logs
-
-### View memory-proxy logs
-
-```bash
-python scripts/memory-proxy/view_logs.py
-# Reads ~/ai-stack/logs/memory_api.log
-# Offers option to delete after viewing
+```text
+http://localhost:8080
 ```
 
-### Tail logs directly
+Add OpenAI-compatible connections for:
 
-```bash
-tail -f ~/ai-stack/logs/memory_api.log
-tail -f ~/ai-stack/logs/code_proxy.log
+```text
+http://vm-llama:8082/v1
+http://code-proxy:9001/v1
+http://memory-proxy:9002/v1
 ```
 
-### Docker Compose logs
+If you configure clients outside Docker, such as Continue.dev on your laptop,
+use the VM hostname/IP or your port-forwarded localhost address instead.
 
-```bash
-docker compose logs -f memory-proxy
-docker compose logs -f code-proxy
-docker compose logs -f qdrant
-```
+## Continue.dev Example
 
----
-
-## Backup
-
-```bash
-bash backup-ai-stack.sh
-```
-
-Backs up (to `~/ai-stack/backups/`):
-- Open WebUI data
-- Qdrant vector data
-- Scripts and config files
-- Env files
-- Logs
-- systemd / Podman container config
-
-> Backups older than 7 days are pruned automatically.
-
----
-
-## Continue.dev Config
-
-Add these models to your `~/.continue/config.yaml` on the laptop:
+Add whichever endpoints you use to `~/.continue/config.yaml`:
 
 ```yaml
 models:
-  - name: Laptop Fast Coder
+  - name: VM Llama
     provider: openai
-    model: qwen2.5-coder-3b
-    apiBase: http://localhost:8081/v1
-    apiKey: dummy
-    roles: [chat, edit, apply]
-
-  - name: VM Deep Coder
-    provider: openai
-    model: qwen2.5-coder-7b
+    model: qwen2.5-coder
     apiBase: http://localhost:8082/v1
     apiKey: dummy
     roles: [chat, edit, apply]
@@ -452,63 +453,102 @@ models:
     roles: [embed]
 ```
 
----
+## OpenShift Port Forwarding
+
+To access services running inside an OpenShift/KubeVirt VM from your laptop,
+port-forward the relevant VM pod ports. Example for the llama.cpp server:
+
+```bash
+oc port-forward pod/virt-launcher-vm-ai-<pod-id> 8082:8082
+```
+
+This makes `http://localhost:8082/v1` available on the laptop.
+
+## Health Check And Logs
+
+CLI status:
+
+```bash
+./ai-stack status
+```
+
+Legacy health script:
+
+```bash
+bash health-check.sh
+```
+
+Docker logs:
+
+```bash
+./ai-stack logs all
+./ai-stack logs llama
+./ai-stack logs qdrant
+./ai-stack logs code
+./ai-stack logs memory
+./ai-stack logs webui
+./ai-stack logs dashboard
+```
+
+Proxy log helpers:
+
+```bash
+python3 scripts/memory-proxy/view_logs.py
+```
+
+## Backup
+
+```bash
+bash backup-ai-stack.sh
+```
+
+Backups are written under `~/ai-stack/backups/` by the current script and older
+archives are pruned automatically.
+
+Review `backup-ai-stack.sh` before relying on it for production backups because
+some Docker data now lives in named volumes.
 
 ## Repository Layout
 
-```
+```text
 ai-stack-vm/
-├── docker/                          # All Dockerfiles
-│   ├── Dockerfile.base              # Shared proxy base (Python deps + embeddings)
-│   ├── Dockerfile.memory-proxy      # memory-proxy service image
-│   ├── Dockerfile.code-proxy        # code-proxy service image
-│   ├── Dockerfile.watcher-base      # Shared watcher base (watchdog deps)
-│   └── Dockerfile.watcher           # Watcher service image (auto-indexer)
-├── scripts/                         # Python scripts organised by service
-│   ├── memory-proxy/
-│   │   ├── memory_api.py            # FastAPI memory-proxy server
-│   │   ├── index_memory.py          # Manual indexer for engineering-memory
-│   │   ├── search_memory.py         # Debug search against memory collection
-│   │   ├── watch_memory.py          # File-system watcher (memory auto-index)
-│   │   ├── ask_with_memory.py       # CLI RAG query against memory
-│   │   ├── view_logs.py             # Log viewer / cleaner
-│   │   └── .example.memory-api.env # Env file template
-│   ├── code-proxy/
-│   │   ├── code_proxy.py            # FastAPI code-proxy server
-│   │   ├── search_code.py           # Debug search against code collection
-│   │   └── .example.code-proxy.env # Env file template
-│   └── watcher/
-│       ├── watch_code.py            # File-system watcher (code auto-index)
-│       ├── index_code.py            # Manual indexer for code-memory repos
-│       ├── search_code.py           # Debug search helper
-│       ├── requirements.txt         # Watcher-specific Python deps
-│       └── .example.watcher.env    # Env file template
-├── docs/
-│   ├── ports.md
-│   ├── migration-v2.md
-│   └── project-phase-1.md
-├── docker-compose.yml               # Master: all services (with resource limits)
-├── docker-compose.memory-proxy.yml  # Memory-proxy + Qdrant only
-├── docker-compose.code-proxy.yml    # Code-proxy + Qdrant only
-├── health-check.sh
-├── backup-ai-stack.sh
-└── requirements.txt                 # Shared Python deps (used by Dockerfile.base)
+|-- ai-stack                         CLI helper
+|-- docker-compose.yml               main stack
+|-- docker-compose.memory-proxy.yml  memory-proxy + Qdrant convenience compose
+|-- docker-compose.code-proxy.yml    code-proxy + Qdrant convenience compose
+|-- docker-compose.dashboard.yml     optional dashboard API compose
+|-- docker/
+|   |-- Dockerfile.base
+|   |-- Dockerfile.memory-proxy
+|   |-- Dockerfile.code-proxy
+|   |-- Dockerfile.dashboard
+|   |-- Dockerfile.watcher-base
+|   `-- Dockerfile.watcher
+|-- scripts/
+|   |-- memory-proxy/
+|   |-- code-proxy/
+|   |-- dashboard/
+|   `-- watcher/
+|-- docs/
+|-- models/
+|-- qdrant/
+|-- open-webui/
+|-- python-envs/
+|-- health-check.sh
+|-- backup-ai-stack.sh
+`-- requirements.txt
 ```
 
----
+## Not Committed To Git
 
-## What is NOT committed to Git
-
-```
-models/          ← GGUF model files (too large)
-qdrant/          ← Vector database storage
-open-webui/      ← Open WebUI chat history/data
-python-envs/     ← Python virtual environments
-logs/            ← Runtime logs
-backups/         ← Backup archives
-*.env            ← Real env files with secrets
+```text
+models/*          GGUF model files
+qdrant/*          local vector database storage, if used
+open-webui/*      local Open WebUI data, if used
+python-envs/*     Python virtual environments
+*.env             real env files and secrets
+*.log             runtime logs
 ```
 
-> **Note:** The `~/ai-stack/memory/` directory on the VM is **not** part of this repo.
-> It lives only on the VM and contains your personal engineering notes and cloned code repos.
-> Back it up with `backup-ai-stack.sh`.
+The `README.md` placeholder files inside ignored runtime folders are committed
+so the directory purposes remain visible.

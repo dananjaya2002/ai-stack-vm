@@ -1,0 +1,18 @@
+FROM docker.io/library/python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY scripts/dashboard/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    useradd -m -u 10001 appuser && \
+    chown -R appuser:appuser /app
+
+COPY --chown=appuser:appuser scripts/dashboard/dashboard_api.py ./dashboard_api.py
+
+USER appuser
+EXPOSE 9100
+
+CMD ["uvicorn", "dashboard_api:app", "--host", "0.0.0.0", "--port", "9100"]
