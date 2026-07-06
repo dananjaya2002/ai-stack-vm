@@ -1,0 +1,19 @@
+# Dockerfile.agentic-rag
+# Requires the base image to be built first:
+#   docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
+#
+FROM ai-stack/base-deps
+WORKDIR /app
+
+ENV OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    TOKENIZERS_PARALLELISM=false \
+    PYTHONUNBUFFERED=1
+
+COPY --chown=appuser:appuser scripts/agentic-rag/agentic_rag_api.py ./agentic_rag_api.py
+COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
+
+USER appuser
+EXPOSE 9200
+
+CMD ["uvicorn", "agentic_rag_api:app", "--host", "0.0.0.0", "--port", "9200", "--workers", "1"]

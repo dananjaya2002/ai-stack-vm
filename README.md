@@ -16,6 +16,7 @@ Container host / VM
 |-- memory-proxy  engineering-memory RAG proxy       -> http://localhost:9002/v1
 |-- code-proxy    code-memory RAG proxy              -> http://localhost:9001/v1
 |-- open-webui    browser chat UI                    -> http://localhost:8080
+|-- agentic-rag   Index v2 Open WebUI connector      -> http://localhost:9200/v1
 `-- dashboard     management website/API            -> http://localhost:9100
 ```
 
@@ -122,6 +123,7 @@ memory.
 | Qdrant gRPC | 6334 | Qdrant default gRPC port, not published by current compose |
 | code-proxy | 9001 | OpenAI-compatible code RAG proxy |
 | memory-proxy | 9002 | OpenAI-compatible memory RAG proxy |
+| agentic-rag | 9200 | OpenAI-compatible agentic retrieval connector |
 | dashboard | 9100 | Optional management website and status API |
 
 ## Prerequisites
@@ -414,6 +416,14 @@ Run the optional dashboard website:
 curl http://localhost:9100/api/dashboard/status
 ```
 
+Run the optional Agentic RAG Open WebUI connector after the main stack is up:
+
+```bash
+./ai-stack up
+docker compose -f docker-compose.agentic-rag.yml up -d --build
+curl http://localhost:9200/v1/models
+```
+
 Note: the split compose files are older convenience files. The main
 `docker-compose.yml` is the source of truth used by `./ai-stack`.
 
@@ -623,6 +633,71 @@ curl -H "Authorization: Bearer $AI_STACK_API_KEY" http://localhost:9002/v1/model
 
 When `AI_STACK_API_KEY` is empty in development mode, omit the header.
 
+## Agentic Retrieval Over Index v2
+
+The optional `agentic-rag` service is a separate OpenAI-compatible connector for
+Open WebUI. It reuses the existing main stack services instead of starting its
+own model or vector database:
+
+```text
+agentic-rag -> qdrant:6333
+agentic-rag -> vm-llama:8082/v1
+```
+
+Start the main stack first, then start the connector:
+
+```bash
+./ai-stack up
+docker compose -f docker-compose.agentic-rag.yml up -d --build
+```
+
+The compose file contains only the `agentic-rag` service and joins the existing
+Compose network. It defaults to `AI_STACK_NETWORK=ai-stack-vm_default`; set that
+environment variable if your Compose project network has a different name.
+
+Open WebUI connector URLs:
+
+```text
+Inside Docker/Open WebUI: http://agentic-rag:9200/v1
+From the host browser:   http://localhost:9200/v1
+```
+
+Traditional top-k RAG retrieves one fixed batch of chunks. Agentic retrieval
+first analyzes the question, creates sub-queries, searches the existing
+`engineering-memory` and `code-memory` Qdrant collections, evaluates whether the
+evidence is enough, optionally runs follow-up searches, and then answers with
+citations.
+
+Configuration lives in `scripts/agentic-rag/agentic-rag.env.example`:
+
+```env
+ENABLE_INDEX_V2=true
+ENABLE_AGENTIC_RETRIEVAL=true
+AGENTIC_MAX_STEPS=4
+AGENTIC_INITIAL_SUBQUERIES=3
+AGENTIC_FOLLOWUP_TOP_K=4
+AGENTIC_MAX_TOTAL_CHUNKS=16
+AGENTIC_MIN_CONFIDENCE=0.70
+AGENTIC_TOP_K_PER_QUERY=3
+```
+
+Debug the retrieval trace:
+
+```bash
+curl -X POST http://localhost:9200/v1/rag/debug \
+  -H "Content-Type: application/json" \
+  -d '{"question":"How do the dashboard, proxy security, and compose files connect?"}'
+```
+
+Useful test questions:
+
+```text
+What does the sample Python app do?
+Where is API authentication configured?
+How do the dashboard status endpoint, README security notes, and compose ports connect?
+Which files explain repository indexing and how is it exposed to users?
+```
+
 ## Dashboard Website
 
 The optional dashboard at `http://localhost:9100` provides a React/Vite tabbed
@@ -742,6 +817,7 @@ Add OpenAI-compatible connections for:
 http://vm-llama:8082/v1
 http://code-proxy:9001/v1
 http://memory-proxy:9002/v1
+http://agentic-rag:9200/v1
 ```
 
 If you configure clients outside Docker, such as Continue.dev on your laptop,
@@ -844,16 +920,19 @@ ai-stack-vm/
 |-- docker-compose.memory-proxy.yml  memory-proxy + Qdrant convenience compose
 |-- docker-compose.code-proxy.yml    code-proxy + Qdrant convenience compose
 |-- docker-compose.dashboard.yml     optional dashboard API compose
+|-- docker-compose.agentic-rag.yml   agentic-rag Open WebUI connector compose
 |-- docker/
 |   |-- Dockerfile.base
 |   |-- Dockerfile.memory-proxy
 |   |-- Dockerfile.code-proxy
+|   |-- Dockerfile.agentic-rag
 |   |-- Dockerfile.dashboard
 |   |-- Dockerfile.watcher-base
 |   `-- Dockerfile.watcher
 |-- scripts/
 |   |-- memory-proxy/
 |   |-- code-proxy/
+|   |-- agentic-rag/
 |   |-- dashboard/                  FastAPI dashboard + React/Vite frontend
 |   `-- watcher/
 |-- docs/

@@ -1,0 +1,35 @@
+services:
+  agentic-rag:
+    image: ai-stack/agentic-rag
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agentic-rag
+    container_name: agentic-rag
+    env_file:
+      - scripts/agentic-rag/agentic-rag.env.example
+    environment:
+      SECURITY_MODE: ${SECURITY_MODE:-development}
+      AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
+      ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      MEMORY_COLLECTION: ${MEMORY_COLLECTION:-engineering-memory}
+      CODE_COLLECTION: ${CODE_COLLECTION:-code-memory}
+      LLM_BASE_URL: http://vm-llama:8082/v1
+      LLM_MODEL: ${MODEL_NAME:-qwen2.5-coder-7b-instruct-q4_k_m.gguf}
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:9200:9200"
+    volumes:
+      - agentic_rag_logs:/logs/agentic-rag
+    restart: unless-stopped
+    networks:
+      - ai-stack
+
+volumes:
+  agentic_rag_logs:
+
+networks:
+  ai-stack:
+    name: ${AI_STACK_NETWORK:-ai-stack-vm_default}
+    external: true
