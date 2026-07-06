@@ -26,6 +26,22 @@ else
 fi
 
 echo
+echo "Backing up engineering-memory..."
+if [ -d "$AI_STACK_DIR/memory/engineering-memory" ]; then
+  tar -czf "$BACKUP_DIR/engineering-memory-$DATE.tar.gz" -C "$AI_STACK_DIR/memory" engineering-memory || true
+else
+  echo "engineering-memory directory not found, skipping."
+fi
+
+echo
+echo "Backing up code-memory (repo clones)..."
+if [ -d "$AI_STACK_DIR/memory/code-memory" ]; then
+  tar -czf "$BACKUP_DIR/code-memory-$DATE.tar.gz" -C "$AI_STACK_DIR/memory" code-memory || true
+else
+  echo "code-memory directory not found, skipping."
+fi
+
+echo
 echo "Backing up scripts and configuration..."
 tar -czf "$BACKUP_DIR/scripts-config-$DATE.tar.gz" \
   -C "$AI_STACK_DIR" \
@@ -36,13 +52,19 @@ tar -czf "$BACKUP_DIR/scripts-config-$DATE.tar.gz" \
   2>/dev/null || true
 
 echo
-echo "Backing up memory API env file..."
-if [ -f "$AI_STACK_DIR/scripts/memory-api.env" ]; then
+echo "Backing up memory API and code proxy env files..."
+if [ -f "$AI_STACK_DIR/scripts/memory-proxy/memory-api.env" ]; then
+  tar -czf "$BACKUP_DIR/memory-api-env-$DATE.tar.gz" -C "$AI_STACK_DIR/scripts/memory-proxy" memory-api.env || true
+elif [ -f "$AI_STACK_DIR/scripts/memory-api.env" ]; then
   tar -czf "$BACKUP_DIR/memory-api-env-$DATE.tar.gz" -C "$AI_STACK_DIR/scripts" memory-api.env || true
 elif [ -f "$AI_STACK_DIR/memory-api.env" ]; then
   tar -czf "$BACKUP_DIR/memory-api-env-$DATE.tar.gz" -C "$AI_STACK_DIR" memory-api.env || true
 else
   echo "memory-api.env not found, skipping."
+fi
+
+if [ -f "$AI_STACK_DIR/scripts/code-proxy/code-proxy.env" ]; then
+  tar -czf "$BACKUP_DIR/code-proxy-env-$DATE.tar.gz" -C "$AI_STACK_DIR/scripts/code-proxy" code-proxy.env || true
 fi
 
 echo

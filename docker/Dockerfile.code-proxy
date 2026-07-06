@@ -1,0 +1,26 @@
+# Dockerfile.code-proxy
+# Requires the base image to be built first:
+#   docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
+# Then build this image:
+#   docker build -f docker/Dockerfile.code-proxy -t ai-stack/code-proxy .
+#
+FROM ai-stack/base-deps
+WORKDIR /app
+
+# CPU core thread throttling for high-core environments
+ENV OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    TOKENIZERS_PARALLELISM=false \
+    PYTHONUNBUFFERED=1
+
+# Copy code-proxy source files only
+COPY --chown=appuser:appuser scripts/code-proxy/code_proxy.py ./code_proxy.py
+COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
+
+# Switch to the non-root execution user
+USER appuser
+# Expose your targeted service port
+EXPOSE 9001
+
+# Run with Uvicorn configured for performance
+CMD ["uvicorn", "code_proxy:app", "--host", "0.0.0.0", "--port", "9001", "--workers", "1"]

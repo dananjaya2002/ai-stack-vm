@@ -1,0 +1,9 @@
+FROM ai-stack/watcher-deps
+
+WORKDIR /app
+
+COPY --chown=appuser:appuser scripts/watcher/watch_code.py ./watch_code.py
+COPY --chown=appuser:appuser scripts/watcher/index_code.py ./index_code.py
+COPY --chown=appuser:appuser scripts/watcher/search_code.py ./search_code.py
+
+CMD ["python", "/app/watch_code.py"]

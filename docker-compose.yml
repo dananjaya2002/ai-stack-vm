@@ -1,0 +1,130 @@
+services:
+
+  qdrant:
+    image: docker.io/qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 6gb
+        reservations:
+          cpus: '2'
+          memory: 2gb
+
+  memory-proxy:
+    image: ai-stack/memory-proxy
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.memory-proxy
+    container_name: memory-proxy
+    env_file:
+      - scripts/memory-proxy/memory-api.env
+    environment:
+      SECURITY_MODE: ${SECURITY_MODE:-development}
+      AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
+      ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      MEMORY_DIR: /memory
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:9002:9002"
+    depends_on:
+      - qdrant
+    volumes:
+      - memory_logs:/logs/memory
+      - ${AI_STACK_HOME}/memory/engineering-memory:/memory:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4gb
+        reservations:
+          cpus: '1'
+          memory: 2gb
+
+  code-proxy:
+    image: ai-stack/code-proxy
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.code-proxy
+    container_name: code-proxy
+    env_file:
+      - scripts/code-proxy/code-proxy.env
+    environment:
+      SECURITY_MODE: ${SECURITY_MODE:-development}
+      AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
+      ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:9001:9001"
+    depends_on:
+      - qdrant
+    volumes:
+      - code_logs:/logs/code
+      - ${AI_STACK_HOME}/memory/code-memory:/code-memory:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 4gb
+        reservations:
+          cpus: '2'
+          memory: 2gb
+
+  vm-llama:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: vm-llama
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:8082:8082" # Accessible on your VM host at port 8082
+    volumes:
+      - ${AI_STACK_HOME}/models:/models:ro
+    command: [
+      "-m", "/models/${MODEL_FILE:-Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf}",
+      "--host", "0.0.0.0",
+      "--port", "8082", # Internal port the application listens on
+      "-c", "${LLAMA_CONTEXT:-8192}",
+      "-b", "${LLAMA_BATCH:-512}",
+      "-ub", "${LLAMA_UBATCH:-256}",
+      "-t", "${LLAMA_THREADS:-6}",
+      "--cache-type-k", "q8_0",
+      "--cache-type-v", "q8_0"
+    ]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "${LLAMA_CPU_LIMIT:-8}"
+          memory: "${LLAMA_MEMORY_LIMIT:-14gb}"
+        reservations:
+          cpus: "${LLAMA_CPU_RESERVATION:-4}"
+          memory: "${LLAMA_MEMORY_RESERVATION:-8gb}"
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "${OPEN_WEBUI_BIND_HOST:-0.0.0.0}:8080:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 3gb         # Dropped slightly to leave an un-allocatable host OS buffer
+        reservations:
+          cpus: '1'
+          memory: 1gb
+
+volumes:
+  qdrant_data:
+  memory_logs:
+  code_logs:
+  open_webui_data:

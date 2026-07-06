@@ -1,0 +1,11 @@
+ai-stack.example.com {
+    reverse_proxy open-webui:8080
+}
+
+memory.ai-stack.example.com {
+    reverse_proxy memory-proxy:9002
+}
+
+code.ai-stack.example.com {
+    reverse_proxy code-proxy:9001
+}

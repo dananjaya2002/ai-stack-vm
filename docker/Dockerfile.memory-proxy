@@ -1,0 +1,23 @@
+# Dockerfile.memory-proxy
+# Requires the base image to be built first:
+#   docker build -f docker/Dockerfile.base -t ai-stack/base-deps .
+# Then build this image:
+#   docker build -f docker/Dockerfile.memory-proxy -t ai-stack/memory-proxy .
+#
+FROM ai-stack/base-deps
+WORKDIR /app
+
+# CPU core thread throttling for high-core environments
+ENV OMP_NUM_THREADS=4
+ENV MKL_NUM_THREADS=4
+
+# Copy memory-proxy source files only
+COPY --chown=appuser:appuser scripts/memory-proxy/memory_api.py ./memory_api.py
+COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
+
+# Switch to the non-root execution user
+USER appuser
+# Expose your targeted service port
+EXPOSE 9002
+
+CMD ["uvicorn", "memory_api:app", "--host", "0.0.0.0", "--port", "9002", "--workers", "4"]
