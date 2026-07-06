@@ -223,39 +223,29 @@ def call_llm_json(prompt: str, fallback: Dict[str, Any], max_tokens: int = 1024)
         return fallback
 
 
+def has_config_term(text: str, terms: set[str]) -> bool:
+    normalized = text.lower()
+    tokens = set(re.findall(r"[a-z0-9_]+", normalized))
+    for term in terms:
+        if " " in term:
+            if term in normalized:
+                return True
+            continue
+        if term in tokens:
+            return True
+    return False
+
+
 def heuristic_sources(question: str) -> List[SourceName]:
     q = question.lower()
-    code_terms = {
-        "code",
-        "function",
-        "class",
-        "api",
-        "endpoint",
-        "docker",
-        "compose",
-        "script",
-        "implementation",
-        "bug",
-        "file",
-        "repo",
-        "repository",
-        "fastapi",
-        "react",
-    }
-    memory_terms = {
-        "memory",
-        "note",
-        "readme",
-        "docs",
-        "document",
-        "architecture",
-        "persona",
-        "project",
-        "explain",
-        "security",
-    }
-    wants_code = any(term in q for term in code_terms)
-    wants_memory = any(term in q for term in memory_terms)
+    code_terms = TERMS_CONFIG["heuristic_code_terms"] | TERMS_CONFIG["implementation_intent_terms"]
+    memory_terms = (
+        TERMS_CONFIG["heuristic_memory_terms"]
+        | TERMS_CONFIG["doc_intent_terms"]
+        | TERMS_CONFIG["explicit_memory_terms"]
+    )
+    wants_code = has_config_term(q, code_terms)
+    wants_memory = has_config_term(q, memory_terms)
     if wants_code and not wants_memory:
         return ["code"]
     if wants_memory and not wants_code:
@@ -489,6 +479,76 @@ Symbol: {chunk.get("symbol_type")} {chunk.get("symbol_name")}
         parts.append(block)
         total_chars += len(block)
     return "\n\n".join(parts) if parts else "No indexed evidence was found."
+
+
+def tokenize_for_relevance(text: str) -> set[str]:
+    stop_words = TERMS_CONFIG["stop_words"]
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]+", text.lower())
+        if len(token) > 2 and token not in stop_words
+    }
+
+
+def chunk_relevance_score(question_tokens: set[str], chunk: Dict[str, Any]) -> float:
+    text_tokens = tokenize_for_relevance(
+        " ".join(
+            str(value or "")
+            for value in [
+                chunk.get("file_path"),
+                chunk.get("symbol_name"),
+                chunk.get("category"),
+                chunk.get("language"),
+                chunk.get("text"),
+            ]
+        )
+    )
+    overlap = len(question_tokens & text_tokens)
+    lexical_score = overlap / max(len(question_tokens), 1)
+    retrieval_score = float(chunk.get("score") or 0.0)
+    symbol_bonus = 0.05 if chunk.get("symbol_name") else 0.0
+    return retrieval_score + lexical_score + symbol_bonus
+
+
+def select_answer_chunks(question: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not chunks:
+        return []
+
+    question_tokens = tokenize_for_relevance(question)
+    ranked = sorted(
+        chunks,
+        key=lambda chunk: chunk_relevance_score(question_tokens, chunk),
+        reverse=True,
+    )
+    answer_limit = max(1, min(AGENTIC_MAX_TOTAL_CHUNKS, 8))
+
+    selected: List[Dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    present_sources = {chunk.get("source_type") for chunk in ranked}
+    target_sources: List[SourceName] = [
+        source for source in ("code", "memory") if source in present_sources
+    ]
+
+    for source in target_sources:
+        source_chunk = next(
+            (chunk for chunk in ranked if chunk.get("source_type") == source),
+            None,
+        )
+        if source_chunk:
+            chunk_id = str(source_chunk.get("chunk_id") or id(source_chunk))
+            selected.append(source_chunk)
+            selected_ids.add(chunk_id)
+
+    for chunk in ranked:
+        if len(selected) >= answer_limit:
+            break
+        chunk_id = str(chunk.get("chunk_id") or id(chunk))
+        if chunk_id in selected_ids:
+            continue
+        selected.append(chunk)
+        selected_ids.add(chunk_id)
+
+    return selected
 
 
 def evaluate_evidence(question: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
