@@ -43,6 +43,12 @@ SEARCH_LIMIT_MULTIPLIER = int(os.getenv("SEARCH_LIMIT_MULTIPLIER", "5"))
 MAX_CHUNKS_PER_FILE = int(os.getenv("MAX_CHUNKS_PER_FILE", "2"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "45000"))
 MAX_CHUNK_CHARS = int(os.getenv("MAX_CHUNK_CHARS", "4000"))
+REPOS_ROOT = Path(
+    os.getenv(
+        "REPOS_ROOT",
+        str(Path.home() / "ai-stack" / "memory" / "code-memory"),
+    )
+)
 
 validate_proxy_environment(
     "code-proxy",
