@@ -2,13 +2,14 @@ import os
 import sys
 import time
 import threading
-import json
 import subprocess
 from pathlib import Path
-from typing import Any, Dict
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.config_loader import default_config_path, load_json_object, require_string_set
 
 
 # -----------------------------
@@ -35,47 +36,16 @@ QDRANT_COLLECTION = os.getenv(
 
 DEBOUNCE_SECONDS = int(os.getenv("MEMORY_WATCH_DEBOUNCE_SECONDS", "5"))
 MIN_FILE_SIZE = int(os.getenv("MEMORY_WATCH_MIN_FILE_SIZE", "5"))
-MEMORY_WATCH_CONFIG_FILE = Path(
-    os.getenv(
-        "MEMORY_WATCH_CONFIG_FILE",
-        str(Path(__file__).resolve().with_name("memory_watch_config.json")),
-    )
-)
-
-
-def load_json_config(path: Path) -> Dict[str, Any]:
-    try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Unable to load memory watch config: {path}") from exc
-    if not isinstance(config, dict):
-        raise RuntimeError(f"Memory watch config must be a JSON object: {path}")
-    return config
-
-
-def config_string_set(config: Dict[str, Any], key: str, *, lowercase: bool = False) -> set[str]:
-    value = config.get(key)
-    if not isinstance(value, list):
-        raise RuntimeError(f"Memory watch config key must be a list: {key}")
-    items = {
-        str(item).strip().lower() if lowercase else str(item).strip()
-        for item in value
-        if str(item).strip()
-    }
-    if not items:
-        raise RuntimeError(f"Memory watch config key must not be empty: {key}")
-    return items
-
-
-MEMORY_WATCH_CONFIG = load_json_config(MEMORY_WATCH_CONFIG_FILE)
+MEMORY_WATCH_CONFIG_FILE = default_config_path("MEMORY_WATCH_CONFIG_FILE", "memory_watch.json", __file__)
+MEMORY_WATCH_CONFIG = load_json_object(MEMORY_WATCH_CONFIG_FILE, "Memory watch")
 
 
 # -----------------------------
 # Ignore rules
 # -----------------------------
 
-IGNORED_DIRS = config_string_set(MEMORY_WATCH_CONFIG, "ignored_dirs")
-IGNORED_SUFFIXES = config_string_set(MEMORY_WATCH_CONFIG, "ignored_suffixes", lowercase=True)
+IGNORED_DIRS = require_string_set(MEMORY_WATCH_CONFIG, "ignored_dirs", "Memory watch")
+IGNORED_SUFFIXES = require_string_set(MEMORY_WATCH_CONFIG, "ignored_suffixes", "Memory watch", lowercase=True)
 
 
 def should_ignore_path(path: Path) -> bool:

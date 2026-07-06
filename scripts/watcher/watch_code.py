@@ -1,13 +1,14 @@
 import os
 import sys
 import time
-import json
 import subprocess
 from pathlib import Path
-from typing import Any, Dict
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.config_loader import default_config_path, load_json_object, require_string_set
 
 
 # -----------------------------
@@ -28,48 +29,17 @@ QDRANT_COLLECTION = os.getenv(
 )
 
 DEBOUNCE_SECONDS = int(os.getenv("CODE_WATCH_DEBOUNCE_SECONDS", "5"))
-CODE_WATCH_CONFIG_FILE = Path(
-    os.getenv(
-        "CODE_WATCH_CONFIG_FILE",
-        str(Path(__file__).resolve().with_name("code_watch_config.json")),
-    )
-)
-
-
-def load_json_config(path: Path) -> Dict[str, Any]:
-    try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Unable to load code watch config: {path}") from exc
-    if not isinstance(config, dict):
-        raise RuntimeError(f"Code watch config must be a JSON object: {path}")
-    return config
-
-
-def config_string_set(config: Dict[str, Any], key: str, *, lowercase: bool = False) -> set[str]:
-    value = config.get(key)
-    if not isinstance(value, list):
-        raise RuntimeError(f"Code watch config key must be a list: {key}")
-    items = {
-        str(item).strip().lower() if lowercase else str(item).strip()
-        for item in value
-        if str(item).strip()
-    }
-    if not items:
-        raise RuntimeError(f"Code watch config key must not be empty: {key}")
-    return items
-
-
-CODE_WATCH_CONFIG = load_json_config(CODE_WATCH_CONFIG_FILE)
+CODE_WATCH_CONFIG_FILE = default_config_path("CODE_WATCH_CONFIG_FILE", "code_watch.json", __file__)
+CODE_WATCH_CONFIG = load_json_object(CODE_WATCH_CONFIG_FILE, "Code watch")
 
 
 # -----------------------------
 # Ignore rules
 # -----------------------------
 
-IGNORED_DIRS = config_string_set(CODE_WATCH_CONFIG, "ignored_dirs")
-IGNORED_SUFFIXES = config_string_set(CODE_WATCH_CONFIG, "ignored_suffixes", lowercase=True)
-IGNORED_NAMES = config_string_set(CODE_WATCH_CONFIG, "ignored_names")
+IGNORED_DIRS = require_string_set(CODE_WATCH_CONFIG, "ignored_dirs", "Code watch")
+IGNORED_SUFFIXES = require_string_set(CODE_WATCH_CONFIG, "ignored_suffixes", "Code watch", lowercase=True)
+IGNORED_NAMES = require_string_set(CODE_WATCH_CONFIG, "ignored_names", "Code watch")
 
 
 pending = {}

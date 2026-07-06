@@ -1,11 +1,10 @@
 import os
 import sys
 import re
-import json
 import hashlib
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -17,6 +16,15 @@ from qdrant_client.models import (
     MatchValue,
 )
 from sentence_transformers import SentenceTransformer
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.config_loader import (
+    default_config_path,
+    load_json_object,
+    require_string_map,
+    require_string_set,
+    require_symbol_patterns,
+)
 
 
 # -----------------------------
@@ -39,99 +47,17 @@ EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 
 CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "2200"))
 CHUNK_OVERLAP_CHARS = int(os.getenv("CHUNK_OVERLAP_CHARS", "300"))
-CODE_INDEX_CONFIG_FILE = Path(
-    os.getenv(
-        "CODE_INDEX_CONFIG_FILE",
-        str(Path(__file__).resolve().with_name("code_index_config.json")),
-    )
-)
-
-
-def load_json_config(path: Path) -> Dict[str, Any]:
-    try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Unable to load code index config: {path}") from exc
-    if not isinstance(config, dict):
-        raise RuntimeError(f"Code index config must be a JSON object: {path}")
-    return config
-
-
-def config_string_set(config: Dict[str, Any], key: str, *, lowercase: bool = False) -> set[str]:
-    value = config.get(key)
-    if not isinstance(value, list):
-        raise RuntimeError(f"Code index config key must be a list: {key}")
-    items = {
-        str(item).strip().lower() if lowercase else str(item).strip()
-        for item in value
-        if str(item).strip()
-    }
-    if not items:
-        raise RuntimeError(f"Code index config key must not be empty: {key}")
-    return items
-
-
-def config_string_map(config: Dict[str, Any], key: str) -> Dict[str, str]:
-    value = config.get(key)
-    if not isinstance(value, dict) or not value:
-        raise RuntimeError(f"Code index config key must be a non-empty object: {key}")
-    items = {
-        str(map_key).strip().lower(): str(map_value).strip()
-        for map_key, map_value in value.items()
-        if str(map_key).strip() and str(map_value).strip()
-    }
-    if not items:
-        raise RuntimeError(f"Code index config key must not be empty: {key}")
-    return items
-
-
-def compile_regex_flags(flag_names: List[str]) -> int:
-    flags = 0
-    for flag_name in flag_names:
-        try:
-            flags |= getattr(re, flag_name)
-        except AttributeError as exc:
-            raise RuntimeError(f"Unsupported regex flag in code index config: {flag_name}") from exc
-    return flags
-
-
-def config_symbol_patterns(config: Dict[str, Any]) -> Dict[str, List[tuple[str, re.Pattern[str]]]]:
-    raw_patterns = config.get("symbol_patterns")
-    if not isinstance(raw_patterns, dict) or not raw_patterns:
-        raise RuntimeError("Code index config key must be a non-empty object: symbol_patterns")
-
-    compiled_patterns: Dict[str, List[tuple[str, re.Pattern[str]]]] = {}
-    for language, patterns in raw_patterns.items():
-        if not isinstance(patterns, list):
-            raise RuntimeError(f"Symbol patterns for {language} must be a list")
-
-        compiled_patterns[str(language)] = []
-        for entry in patterns:
-            if not isinstance(entry, dict):
-                raise RuntimeError(f"Symbol pattern entry for {language} must be an object")
-            symbol_type = str(entry.get("type") or "").strip()
-            pattern = str(entry.get("pattern") or "")
-            raw_flags = entry.get("flags", [])
-            if not isinstance(raw_flags, list):
-                raise RuntimeError(f"Symbol pattern flags for {language}.{symbol_type} must be a list")
-            if not symbol_type or not pattern:
-                raise RuntimeError(f"Symbol pattern entry for {language} requires type and pattern")
-            compiled_patterns[str(language)].append(
-                (symbol_type, re.compile(pattern, compile_regex_flags([str(flag) for flag in raw_flags])))
-            )
-    return compiled_patterns
-
-
-CODE_INDEX_CONFIG = load_json_config(CODE_INDEX_CONFIG_FILE)
+CODE_INDEX_CONFIG_FILE = default_config_path("CODE_INDEX_CONFIG_FILE", "code_index.json", __file__)
+CODE_INDEX_CONFIG = load_json_object(CODE_INDEX_CONFIG_FILE, "Code index")
 
 
 # -----------------------------
 # Ignore configuration
 # -----------------------------
 
-IGNORE_DIRS = config_string_set(CODE_INDEX_CONFIG, "ignore_dirs")
-IGNORE_SUFFIXES = config_string_set(CODE_INDEX_CONFIG, "ignore_suffixes", lowercase=True)
-LANG_BY_EXT = config_string_map(CODE_INDEX_CONFIG, "language_by_extension")
+IGNORE_DIRS = require_string_set(CODE_INDEX_CONFIG, "ignore_dirs", "Code index")
+IGNORE_SUFFIXES = require_string_set(CODE_INDEX_CONFIG, "ignore_suffixes", "Code index", lowercase=True)
+LANG_BY_EXT = require_string_map(CODE_INDEX_CONFIG, "language_by_extension", "Code index")
 
 
 # -----------------------------
@@ -253,7 +179,7 @@ def chunk_text(text: str) -> List[str]:
 # Symbol extraction
 # -----------------------------
 
-SYMBOL_PATTERNS = config_symbol_patterns(CODE_INDEX_CONFIG)
+SYMBOL_PATTERNS = require_symbol_patterns(CODE_INDEX_CONFIG, "symbol_patterns", "Code index")
 
 
 def extract_symbols(text: str, language: str) -> List[Dict[str, object]]:

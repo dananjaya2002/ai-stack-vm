@@ -18,6 +18,7 @@ from sentence_transformers import SentenceTransformer
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
+from shared.config_loader import default_config_path, load_json_object, require_string_sets
 
 
 SourceName = Literal["code", "memory"]
@@ -66,11 +67,10 @@ MAX_CHUNK_CHARS = env_int("MAX_CHUNK_CHARS", "4000")
 MAX_CONTEXT_CHARS = env_int("MAX_CONTEXT_CHARS", "50000")
 LOG_FILE = Path(os.getenv("AGENTIC_RAG_LOG_FILE", "/logs/agentic-rag/agentic_rag.log"))
 ENABLE_LOGGING = env_bool("AGENTIC_RAG_LOGS", "true")
-TERMS_CONFIG_FILE = Path(
-    os.getenv(
-        "AGENTIC_RAG_TERMS_FILE",
-        str(Path(__file__).resolve().with_name("agentic_rag_terms.json")),
-    )
+TERMS_CONFIG_FILE = default_config_path(
+    "AGENTIC_RAG_TERMS_FILE",
+    "agentic_rag_terms.json",
+    __file__,
 )
 
 TERMS_CONFIG_KEYS = [
@@ -83,37 +83,13 @@ TERMS_CONFIG_KEYS = [
 ]
 
 
-def normalize_term_list(value: Any) -> set[str]:
-    if not isinstance(value, list):
-        return set()
-    return {
-        str(term).strip().lower()
-        for term in value
-        if str(term).strip()
-    }
-
-
 def load_terms_config(path: Path) -> Dict[str, set[str]]:
-    try:
-        raw_config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Unable to load Agentic RAG terms config: {path}") from exc
-    if not isinstance(raw_config, dict):
-        raise RuntimeError(f"Agentic RAG terms config must be a JSON object: {path}")
-
-    terms_config: Dict[str, set[str]] = {}
-    missing_keys = [key for key in TERMS_CONFIG_KEYS if key not in raw_config]
-    if missing_keys:
-        raise RuntimeError(
-            f"Agentic RAG terms config is missing required keys: {', '.join(missing_keys)}"
-        )
-
-    for key in TERMS_CONFIG_KEYS:
-        terms = normalize_term_list(raw_config.get(key))
-        if not terms:
-            raise RuntimeError(f"Agentic RAG terms config key must not be empty: {key}")
-        terms_config[key] = terms
-    return terms_config
+    return require_string_sets(
+        load_json_object(path, "Agentic RAG terms"),
+        TERMS_CONFIG_KEYS,
+        "Agentic RAG terms",
+        lowercase=True,
+    )
 
 
 TERMS_CONFIG = load_terms_config(TERMS_CONFIG_FILE)
