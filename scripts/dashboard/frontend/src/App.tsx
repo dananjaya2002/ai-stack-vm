@@ -262,11 +262,8 @@ function App() {
   }
 
   async function deleteEntry(scope: Scope, entry: MemoryFile, afterDelete: () => Promise<void>) {
-    if (entry.kind === "directory" && entry.can_delete === false) {
-      showNotice("Only empty directories can be deleted.", "bad");
-      return;
-    }
-    const kind = entry.kind === "directory" ? "empty directory" : "file";
+    const isDirectory = entry.kind === "directory";
+    const kind = isDirectory ? "folder and everything inside it" : "file";
     const confirmed = window.confirm(`Delete ${kind} ${entry.path} from ${scope} memory?`);
     if (!confirmed) return;
     await run("delete-file", async () => {
@@ -275,22 +272,6 @@ function App() {
       await refreshStatus();
       await refreshLogs();
     }, `${entry.kind === "directory" ? "Directory" : "File"} deleted.`);
-  }
-
-  async function cleanDemoContent() {
-    const confirmed = window.confirm(
-      "Delete demo memory and demo code repositories? This only removes known demo paths.",
-    );
-    if (!confirmed) return;
-    await run("clean-demo", async () => {
-      await dashboardApi.cleanDemo();
-      await Promise.all([
-        refreshFiles(fileScope, filePath),
-        refreshRepoEntries(repoPath),
-        refreshStatus(),
-        refreshLogs(),
-      ]);
-    }, "Demo content deleted.");
   }
 
   async function uploadFiles(event: FormEvent<HTMLFormElement>) {
@@ -436,7 +417,6 @@ function App() {
               setFilter={setFileFilter}
               refresh={() => run("files", () => refreshFiles())}
               deleteEntry={(entry) => deleteEntry(fileScope, entry, () => refreshFiles(fileScope, filePath))}
-              cleanDemo={cleanDemoContent}
             />
           )}
           {activeTab === "upload" && <UploadTab onSubmit={uploadFiles} result={uploadResult} busy={busy === "upload"} />}
@@ -452,7 +432,6 @@ function App() {
               setFilter={setRepoFilter}
               refresh={() => run("repo-files", () => refreshRepoEntries())}
               deleteEntry={(entry) => deleteEntry("code", entry, () => refreshRepoEntries(repoPath))}
-              cleanDemo={cleanDemoContent}
             />
           )}
           {activeTab === "indexing" && <IndexingTab onSubmit={startIndex} jobs={jobs} refresh={() => run("jobs", refreshJobs)} busy={busy === "index"} />}
@@ -710,7 +689,6 @@ function DirectoryTable({
           ) : (
             entries.map((entry) => {
               const isDirectory = entry.kind === "directory";
-              const blockedDelete = isDirectory && entry.can_delete === false;
               return (
                 <tr key={entry.path}>
                   <td className="max-w-[520px] break-words px-4 py-3 font-mono text-xs">
@@ -728,7 +706,7 @@ function DirectoryTable({
                   <td className="px-4 py-3">{isDirectory ? "-" : formatBytes(entry.size_bytes)}</td>
                   <td className="px-4 py-3">{formatTime(entry.modified_time)}</td>
                   <td className="px-4 py-3">
-                    <Button variant="danger" disabled={blockedDelete} title={blockedDelete ? "Only empty directories can be deleted." : undefined} onClick={() => deleteEntry(entry)}>
+                    <Button variant="danger" onClick={() => deleteEntry(entry)}>
                       Delete
                     </Button>
                   </td>
@@ -752,7 +730,6 @@ function FilesTab({
   setFilter,
   refresh,
   deleteEntry,
-  cleanDemo,
 }: {
   scope: Scope;
   setScope: (scope: Scope) => void;
@@ -763,7 +740,6 @@ function FilesTab({
   setFilter: (filter: string) => void;
   refresh: () => void;
   deleteEntry: (entry: MemoryFile) => void;
-  cleanDemo: () => void;
 }) {
   return (
     <Panel>
@@ -775,7 +751,6 @@ function FilesTab({
           </select>
           <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px] max-w-sm" type="search" placeholder="Filter current directory" />
           <Button onClick={refresh}>Refresh</Button>
-          <Button variant="danger" onClick={cleanDemo}>Clean Demo</Button>
         </div>
         <Breadcrumbs path={path} setPath={setPath} />
       </div>
@@ -817,7 +792,6 @@ function RepositoriesTab({
   setFilter,
   refresh,
   deleteEntry,
-  cleanDemo,
 }: {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   result: string;
@@ -829,7 +803,6 @@ function RepositoriesTab({
   setFilter: (filter: string) => void;
   refresh: () => void;
   deleteEntry: (entry: MemoryFile) => void;
-  cleanDemo: () => void;
 }) {
   return (
     <div className="grid gap-5">
@@ -857,7 +830,6 @@ function RepositoriesTab({
             <div className="flex flex-wrap items-center gap-3">
               <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px] max-w-sm" type="search" placeholder="Filter repository directory" />
               <Button onClick={refresh}>Refresh repository view</Button>
-              <Button variant="danger" onClick={cleanDemo}>Clean Demo</Button>
             </div>
             <Breadcrumbs path={path} setPath={setPath} />
           </div>

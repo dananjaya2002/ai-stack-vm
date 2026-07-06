@@ -31,7 +31,6 @@ export const dashboardApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scope, path }),
     }),
-  cleanDemo: () => request<{ ok: boolean; removed: unknown[]; missing: unknown[] }>("/api/dashboard/demo/clean", { method: "POST" }),
   logs: (source: LogSource) =>
     request<LogsResponse>(`/api/dashboard/logs?source=${encodeURIComponent(source)}`),
   setLogCapture: (enabled: boolean) =>

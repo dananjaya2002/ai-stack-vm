@@ -151,7 +151,7 @@ function renderFiles() {
         <td>${file.kind === "directory" ? "-" : formatBytes(file.size_bytes)}</td>
         <td>${file.modified_time}</td>
         <td>
-          <button class="danger small" ${file.kind === "directory" && file.can_delete === false ? "disabled" : ""} data-delete-file="${encodeURIComponent(file.path)}">Delete</button>
+          <button class="danger small" data-delete-file="${encodeURIComponent(file.path)}">Delete</button>
         </td>
       </tr>
     `);
@@ -204,26 +204,13 @@ async function refreshFiles() {
 
 async function deleteFile(path) {
   const scope = document.querySelector("#files-scope").value;
-  const confirmed = window.confirm(`Delete ${path} from ${scope} memory? Empty directories only.`);
+  const confirmed = window.confirm(`Delete ${path} from ${scope} memory? Folders and everything inside them will be removed.`);
   if (!confirmed) return;
   await api("/api/dashboard/files", {
     method: "DELETE",
     headers: headers(),
     body: JSON.stringify({ scope, path }),
   });
-  await refreshFiles();
-  await refreshStatus();
-  await refreshLogs();
-}
-
-async function cleanDemoContent() {
-  const confirmed = window.confirm("Delete demo memory and demo code repositories? This only removes known demo paths.");
-  if (!confirmed) return;
-  await api("/api/dashboard/demo/clean", {
-    method: "POST",
-    headers: headers(),
-  });
-  state.filesPath = "";
   await refreshFiles();
   await refreshStatus();
   await refreshLogs();
@@ -343,7 +330,6 @@ function bind() {
   document.querySelector("#log-source").addEventListener("change", () => runAction(refreshLogs));
   document.querySelector("#log-capture").addEventListener("change", () => runAction(setLogCapture));
   document.querySelector("#refresh-files").addEventListener("click", () => runAction(refreshFiles));
-  document.querySelector("#clean-demo").addEventListener("click", () => runAction(cleanDemoContent, "Demo content deleted."));
   document.querySelector("#files-scope").addEventListener("change", () => {
     state.filesPath = "";
     runAction(refreshFiles);

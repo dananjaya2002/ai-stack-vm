@@ -84,10 +84,6 @@ class DeleteFileRequest(BaseModel):
     path: str
 
 
-DEMO_ENGINEERING_PATHS = ("demo",)
-DEMO_CODE_PATHS = ("sample-python-app", "sample-repository-app")
-
-
 def iso_time(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
@@ -397,7 +393,7 @@ def list_directory(scope: str, raw_path: Optional[str]) -> Dict[str, Any]:
                 "modified_time": iso_time(stat.st_mtime),
                 "extension": "" if is_dir else item.suffix.lower(),
                 "child_count": directory_child_count(item) if is_dir else None,
-                "can_delete": not is_dir or directory_child_count(item) == 0,
+                "can_delete": True,
             }
         )
 
@@ -601,69 +597,26 @@ def delete_memory_file(scope: str, relative_path: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Path does not exist.")
 
     if target.is_dir():
-        try:
-            next(target.iterdir())
-        except StopIteration:
-            target.rmdir()
-            deleted_kind = "directory"
-            size_bytes = 0
-        else:
-            raise HTTPException(status_code=400, detail="Directory is not empty. Recursive deletion is not supported.")
+        file_count = sum(1 for item in target.rglob("*") if item.is_file())
+        shutil.rmtree(target)
+        deleted_kind = "directory"
+        size_bytes = 0
     elif target.is_file():
         size_bytes = target.stat().st_size
         target.unlink()
         deleted_kind = "file"
+        file_count = 1
     else:
-        raise HTTPException(status_code=400, detail="Only files and empty directories can be deleted.")
+        raise HTTPException(status_code=400, detail="Only files and directories can be deleted.")
 
     record_dashboard_event(
         f"delete {scope}",
         [
             f"Deleted {deleted_kind} {relative_path} from {scope} memory.",
-            f"Size: {size_bytes} bytes",
+            f"Files removed: {file_count}",
         ],
     )
-    return {"ok": True, "scope": scope, "path": relative_path, "kind": deleted_kind, "size_bytes": size_bytes}
-
-
-def remove_demo_content() -> Dict[str, Any]:
-    removed = []
-    missing = []
-
-    targets = [
-        ("engineering", ENGINEERING_MEMORY_DIR, name)
-        for name in DEMO_ENGINEERING_PATHS
-    ] + [
-        ("code", CODE_MEMORY_DIR, name)
-        for name in DEMO_CODE_PATHS
-    ]
-
-    for scope, root, name in targets:
-        target = safe_join(root, name)
-        if not target.exists():
-            missing.append({"scope": scope, "path": name})
-            continue
-
-        if target.is_dir():
-            shutil.rmtree(target)
-            kind = "directory"
-        elif target.is_file():
-            target.unlink()
-            kind = "file"
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported demo path type: {name}")
-
-        removed.append({"scope": scope, "path": name, "kind": kind})
-
-    record_dashboard_event(
-        "clean demo content",
-        [
-            "Cleaned demo content from dashboard.",
-            *[f"removed {item['scope']}: {item['path']}" for item in removed],
-            *[f"missing {item['scope']}: {item['path']}" for item in missing],
-        ],
-    )
-    return {"ok": True, "removed": removed, "missing": missing}
+    return {"ok": True, "scope": scope, "path": relative_path, "kind": deleted_kind, "size_bytes": size_bytes, "file_count": file_count}
 
 
 def watcher_public(scope: str, watcher: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -726,11 +679,6 @@ def dashboard_files(scope: str, path: Optional[str] = None, flat: bool = False) 
 @app.delete("/api/dashboard/files")
 def dashboard_delete_file(req: DeleteFileRequest) -> Dict[str, Any]:
     return delete_memory_file(req.scope, req.path)
-
-
-@app.post("/api/dashboard/demo/clean")
-def dashboard_clean_demo() -> Dict[str, Any]:
-    return remove_demo_content()
 
 
 @app.get("/api/dashboard/logs")
