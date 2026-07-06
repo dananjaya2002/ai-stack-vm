@@ -329,10 +329,10 @@ cmd_profile() {
       info "applied laptop profile for 12 cores / 16 GB RAM"
       ;;
     vm16)
-      set_env_var MODEL_NAME "${MODEL_7B_NAME}"
-      set_env_var MODEL_FILE "${MODEL_7B_FILE}"
+      set_env_var MODEL_NAME "${DEFAULT_MODEL_NAME}"
+      set_env_var MODEL_FILE "${DEFAULT_MODEL_FILE}"
       set_env_var MODEL_PROFILE "vm16"
-      set_env_var MODEL_URL "${MODEL_7B_URL}"
+      set_env_var MODEL_URL "${DEFAULT_MODEL_URL}"
       set_env_var MODEL_SHA256 ""
       set_env_var LLAMA_THREADS "8"
       set_env_var LLAMA_CONTEXT "8192"
@@ -342,7 +342,7 @@ cmd_profile() {
       set_env_var LLAMA_MEMORY_LIMIT "14gb"
       set_env_var LLAMA_CPU_RESERVATION "4"
       set_env_var LLAMA_MEMORY_RESERVATION "8gb"
-      info "applied vm16 profile for stronger VMs / workstations"
+      info "applied vm16 profile for OpenShift VM requests 16 CPU / 48Gi memory"
       ;;
     vm60)
       set_env_var MODEL_NAME "${VM60_MODEL_NAME}"
