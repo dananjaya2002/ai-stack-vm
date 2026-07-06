@@ -65,6 +65,26 @@ button.danger:hover {
   background: #f8d0cc;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button.link-button {
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+button.link-button:hover {
+  background: transparent;
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
 button.small {
   min-height: 30px;
   padding: 0 10px;
@@ -171,6 +191,15 @@ select {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .muted-text {

@@ -1,0 +1,10 @@
+flowchart LR
+  Client[Browser / IDE] --> WebUI[Open WebUI]
+  Client --> CodeProxy[Code Proxy]
+  Client --> MemoryProxy[Memory Proxy]
+  WebUI --> Llama[llama.cpp OpenAI API]
+  CodeProxy --> Llama
+  MemoryProxy --> Llama
+  CodeProxy --> Qdrant[Qdrant vector DB]
+  MemoryProxy --> Qdrant
+  Qdrant --> Memory[(Engineering notes and code repos)]

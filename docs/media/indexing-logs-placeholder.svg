@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Indexing and logs screenshot placeholder</title>
+  <desc id="desc">Placeholder image for indexing jobs and logs screenshot.</desc>
+  <rect width="1280" height="720" fill="#eef4f8"/>
+  <rect x="70" y="70" width="1140" height="580" rx="18" fill="#ffffff" stroke="#d8e0ea"/>
+  <text x="120" y="135" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="800" fill="#142033">Indexing Jobs And Logs</text>
+  <rect x="120" y="180" width="1040" height="400" rx="10" fill="#0b1220"/>
+  <text x="160" y="240" font-family="Consolas, monospace" font-size="22" fill="#d7e4f2">[running] index code sample-python-app</text>
+  <text x="160" y="285" font-family="Consolas, monospace" font-size="22" fill="#d7e4f2">Indexed files: 3</text>
+  <text x="160" y="330" font-family="Consolas, monospace" font-size="22" fill="#d7e4f2">Total chunks: 8</text>
+  <text x="640" y="630" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700" fill="#142033">Replace with indexing/logs screenshot</text>
+</svg>

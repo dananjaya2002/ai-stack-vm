@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">AI Stack architecture diagram</title>
+  <desc id="desc">Architecture diagram showing clients, Open WebUI, proxies, llama.cpp, Qdrant, and memory folders.</desc>
+  <rect width="1280" height="720" fill="#f8fafc"/>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L8,3 z" fill="#1565c0"/>
+    </marker>
+  </defs>
+  <g font-family="Inter, Arial, sans-serif" font-size="22" fill="#142033">
+    <rect x="70" y="110" width="220" height="90" rx="12" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
+    <text x="180" y="163" text-anchor="middle" font-weight="700">Browser / IDE</text>
+    <rect x="390" y="90" width="230" height="90" rx="12" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
+    <text x="505" y="143" text-anchor="middle" font-weight="700">Open WebUI</text>
+    <rect x="390" y="235" width="230" height="90" rx="12" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
+    <text x="505" y="288" text-anchor="middle" font-weight="700">Code Proxy</text>
+    <rect x="390" y="380" width="230" height="90" rx="12" fill="#ffffff" stroke="#1565c0" stroke-width="2"/>
+    <text x="505" y="433" text-anchor="middle" font-weight="700">Memory Proxy</text>
+    <rect x="740" y="160" width="230" height="90" rx="12" fill="#ffffff" stroke="#0f7b58" stroke-width="2"/>
+    <text x="855" y="213" text-anchor="middle" font-weight="700">llama.cpp</text>
+    <rect x="740" y="340" width="230" height="90" rx="12" fill="#ffffff" stroke="#0f7b58" stroke-width="2"/>
+    <text x="855" y="393" text-anchor="middle" font-weight="700">Qdrant</text>
+    <rect x="1030" y="300" width="190" height="170" rx="12" fill="#ffffff" stroke="#697789" stroke-width="2"/>
+    <text x="1125" y="360" text-anchor="middle" font-weight="700">Memory</text>
+    <text x="1125" y="395" text-anchor="middle">notes</text>
+    <text x="1125" y="425" text-anchor="middle">repos</text>
+  </g>
+  <g stroke="#1565c0" stroke-width="3" fill="none" marker-end="url(#arrow)">
+    <path d="M290 155 H370"/>
+    <path d="M290 155 C340 210 340 260 370 280"/>
+    <path d="M290 155 C340 300 340 405 370 425"/>
+    <path d="M620 135 C675 135 680 205 720 205"/>
+    <path d="M620 280 C675 280 680 205 720 205"/>
+    <path d="M620 425 C675 425 680 205 720 205"/>
+    <path d="M620 280 H720"/>
+    <path d="M620 425 C675 425 680 385 720 385"/>
+    <path d="M970 385 H1010"/>
+  </g>
+</svg>

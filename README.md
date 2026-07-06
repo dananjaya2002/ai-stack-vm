@@ -27,6 +27,73 @@ Laptop Continue.dev / browser
   -> vm-llama / memory-proxy / code-proxy / Open WebUI
 ```
 
+## Portfolio Preview
+
+> Media below uses committed placeholders until real screenshots and a short
+> demo capture are recorded from a running VM deployment.
+
+![AI Stack dashboard overview](docs/media/dashboard-overview-placeholder.svg)
+
+### Architecture Diagram
+
+![AI Stack architecture diagram](docs/media/architecture-diagram.svg)
+
+Diagram source: [`docs/media/architecture-diagram.mmd`](docs/media/architecture-diagram.mmd)
+
+### Screenshots
+
+| Area | Preview |
+|---|---|
+| Dashboard overview | ![Dashboard overview placeholder](docs/media/dashboard-overview-placeholder.svg) |
+| Memory file browser | ![Memory files placeholder](docs/media/memory-files-placeholder.svg) |
+| Repository browser | ![Repository browser placeholder](docs/media/repository-browser-placeholder.svg) |
+| Indexing and logs | ![Indexing logs placeholder](docs/media/indexing-logs-placeholder.svg) |
+
+### Short Demo Video
+
+![Demo video placeholder](docs/media/demo-video-placeholder.svg)
+
+Replace this placeholder with a short GIF or video showing: stack status,
+repository browsing, indexing, and a RAG question answered through Open WebUI.
+
+## Why This Project Matters
+
+AI Stack VM packages a private, OpenAI-compatible local AI environment that can
+run on a VM, serve a local model, index engineering notes and code repositories,
+and expose the result through familiar tools such as Open WebUI and Continue.dev.
+It is designed for teams or individuals who want useful RAG workflows without
+sending private code or notes to hosted services.
+
+## Problems Solved
+
+- Gives local models a practical OpenAI-compatible surface for chat tools.
+- Adds memory and code retrieval around private engineering context.
+- Keeps runtime data in predictable VM folders under `$AI_STACK_HOME`.
+- Provides a dashboard for health checks, logs, uploads, repo cloning, indexing,
+  and safe file cleanup.
+- Defaults to safer binding, optional bearer auth, and rate limiting for exposed
+  proxy endpoints.
+
+## Benchmarks
+
+Example placeholders until measured on a specific VM:
+
+| Scenario | Latency | RAM | Indexing speed | Notes |
+|---|---:|---:|---:|---|
+| llama.cpp `/v1/models` health check | TBD | TBD | n/a | Replace with dashboard measured latency. |
+| Short chat completion | TBD | TBD | n/a | Record model, context, and token count. |
+| Engineering memory indexing | n/a | TBD | TBD files/min | Measure with `./ai-stack index memory`. |
+| Code repository indexing | n/a | TBD | TBD files/min | Measure with `./ai-stack index code <repo>`. |
+| Dashboard refresh | TBD | TBD | n/a | Use browser plus `/api/dashboard/status`. |
+
+## Future Roadmap
+
+- Real screenshots and a short demo GIF/video from the OpenShift route.
+- Recursive repository deletion with stronger safeguards and typed confirmation.
+- Per-service API keys and dashboard authentication.
+- Qdrant cleanup helpers for deleted demo files or removed repositories.
+- Measured benchmark automation exported into README-ready tables.
+
 ## Runtime Data Layout
 
 By default `./ai-stack init` uses `AI_STACK_HOME=$HOME/ai-stack`.
@@ -452,10 +519,11 @@ It copies fictional engineering memory into:
 $AI_STACK_HOME/memory/engineering-memory/demo/
 ```
 
-It copies the sample Python app into:
+It copies demo code repositories into:
 
 ```text
 $AI_STACK_HOME/memory/code-memory/sample-python-app/
+$AI_STACK_HOME/memory/code-memory/sample-repository-app/
 ```
 
 Then it runs the existing memory and code indexers. If those demo targets already
@@ -477,6 +545,8 @@ Try these code questions:
 What does the sample Python app do?
 Which function formats character summaries?
 Where is the demo data loaded?
+Which files are in the sample repository app?
+Where is repository metadata summarized?
 ```
 
 Clean only demo files with:
@@ -485,9 +555,10 @@ Clean only demo files with:
 ./ai-stack demo clean
 ```
 
-This removes only the demo memory folder and `sample-python-app` demo repo. It
-does not remove other memory/code files. Previously indexed Qdrant vectors may
-remain until you re-index or reset the relevant collections.
+This removes only the demo memory folder and demo code repositories committed
+under `demo/code-memory/`. It does not remove other memory/code files.
+Previously indexed Qdrant vectors may remain until you re-index or reset the
+relevant collections.
 
 ## API Endpoints
 
@@ -538,9 +609,11 @@ Tabs:
 
 - Overview: llama.cpp, Qdrant, memory folder, log, CPU, RAM, and disk status.
 - Logs: memory/code proxy logs plus dashboard job and watcher output, refreshed live.
-- Memory Files: browse and delete engineering or code memory files.
+- Files: browse engineering memory and code repository directories, delete files,
+  and delete empty directories only.
 - Upload: upload engineering memory files or code files/zip archives.
-- Repositories: clone public repos or private HTTPS repos with a one-time Git token.
+- Repositories: clone public repos or private HTTPS repos with a one-time Git
+  token, then browse repository directories.
 - Indexing: start full or targeted indexing jobs.
 - Watchers: start/stop automatic engineering and code reindex watchers.
 

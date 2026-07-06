@@ -348,6 +348,68 @@ def list_files(scope: str) -> Dict[str, Any]:
     return {"ok": True, "error": None, "scope": scope, "root": str(root), "files": files}
 
 
+def directory_child_count(path: Path) -> int:
+    try:
+        return sum(1 for _ in path.iterdir())
+    except Exception:
+        return 0
+
+
+def list_directory(scope: str, raw_path: Optional[str]) -> Dict[str, Any]:
+    root = scope_root(scope)
+    current = safe_join(root, raw_path)
+
+    if not root.exists():
+        return {
+            "ok": False,
+            "error": "Directory does not exist.",
+            "scope": scope,
+            "root": str(root),
+            "path": "",
+            "entries": [],
+            "files": [],
+        }
+    if not current.exists():
+        raise HTTPException(status_code=404, detail="Directory does not exist.")
+    if not current.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory.")
+
+    entries = []
+    for item in sorted(current.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name.lower())):
+        try:
+            stat = item.stat()
+            relative_path = str(item.relative_to(root))
+        except Exception:
+            continue
+
+        is_dir = item.is_dir()
+        entries.append(
+            {
+                "scope": scope,
+                "name": item.name,
+                "path": relative_path,
+                "kind": "directory" if is_dir else "file",
+                "size_bytes": None if is_dir else stat.st_size,
+                "modified_time": iso_time(stat.st_mtime),
+                "extension": "" if is_dir else item.suffix.lower(),
+                "child_count": directory_child_count(item) if is_dir else None,
+                "can_delete": not is_dir or directory_child_count(item) == 0,
+            }
+        )
+
+    files = [entry for entry in entries if entry["kind"] == "file"]
+    relative_current = "" if current == root.resolve() else str(current.relative_to(root.resolve()))
+    return {
+        "ok": True,
+        "error": None,
+        "scope": scope,
+        "root": str(root),
+        "path": relative_current,
+        "entries": entries,
+        "files": files,
+    }
+
+
 def read_last_lines(path: Path, max_lines: int = MAX_LOG_LINES) -> Dict[str, Any]:
     if not path.exists():
         return {"ok": False, "error": "Log file does not exist.", "path": str(path), "lines": []}
@@ -532,21 +594,32 @@ def delete_memory_file(scope: str, relative_path: str) -> Dict[str, Any]:
     root = scope_root(scope)
     target = safe_join(root, relative_path)
     if not target.exists():
-        raise HTTPException(status_code=404, detail="File does not exist.")
-    if not target.is_file():
-        raise HTTPException(status_code=400, detail="Only files can be deleted.")
+        raise HTTPException(status_code=404, detail="Path does not exist.")
 
-    size_bytes = target.stat().st_size
-    target.unlink()
+    if target.is_dir():
+        try:
+            next(target.iterdir())
+        except StopIteration:
+            target.rmdir()
+            deleted_kind = "directory"
+            size_bytes = 0
+        else:
+            raise HTTPException(status_code=400, detail="Directory is not empty. Recursive deletion is not supported.")
+    elif target.is_file():
+        size_bytes = target.stat().st_size
+        target.unlink()
+        deleted_kind = "file"
+    else:
+        raise HTTPException(status_code=400, detail="Only files and empty directories can be deleted.")
 
     record_dashboard_event(
         f"delete {scope}",
         [
-            f"Deleted {relative_path} from {scope} memory.",
+            f"Deleted {deleted_kind} {relative_path} from {scope} memory.",
             f"Size: {size_bytes} bytes",
         ],
     )
-    return {"ok": True, "scope": scope, "path": relative_path, "size_bytes": size_bytes}
+    return {"ok": True, "scope": scope, "path": relative_path, "kind": deleted_kind, "size_bytes": size_bytes}
 
 
 def watcher_public(scope: str, watcher: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -600,8 +673,10 @@ def dashboard_status() -> Dict[str, Any]:
 
 
 @app.get("/api/dashboard/files")
-def dashboard_files(scope: str) -> Dict[str, Any]:
-    return list_files(scope)
+def dashboard_files(scope: str, path: Optional[str] = None, flat: bool = False) -> Dict[str, Any]:
+    if flat:
+        return list_files(scope)
+    return list_directory(scope, path)
 
 
 @app.delete("/api/dashboard/files")

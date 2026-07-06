@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Repository browser screenshot placeholder</title>
+  <desc id="desc">Placeholder image for repository directory browser screenshot.</desc>
+  <rect width="1280" height="720" fill="#eef4f8"/>
+  <rect x="70" y="70" width="1140" height="580" rx="18" fill="#ffffff" stroke="#d8e0ea"/>
+  <text x="120" y="135" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="800" fill="#142033">Code Repository Directory View</text>
+  <rect x="120" y="178" width="410" height="360" rx="10" fill="#f8fafc" stroke="#d8e0ea"/>
+  <rect x="560" y="178" width="600" height="360" rx="10" fill="#ffffff" stroke="#d8e0ea"/>
+  <text x="325" y="360" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700" fill="#1565c0">Clone / Update</text>
+  <text x="860" y="360" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="700" fill="#1565c0">Browse / Delete Files</text>
+  <text x="640" y="610" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="700" fill="#142033">Replace with repository browser screenshot</text>
+</svg>

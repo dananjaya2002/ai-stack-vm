@@ -1,6 +1,7 @@
 const state = {
   currentTab: "overview",
   files: [],
+  filesPath: "",
   poller: null,
   lastUpdatedAt: null,
 };
@@ -8,7 +9,7 @@ const state = {
 const titles = {
   overview: ["Overview", "Service health, storage, and system load."],
   logs: ["Logs", "Proxy logs plus dashboard job and watcher output."],
-  files: ["Memory Files", "Browse engineering and code memory folders."],
+  files: ["File Browser", "Browse engineering memory and code repository folders."],
   upload: ["Upload", "Add files to engineering or code memory."],
   repos: ["Repositories", "Clone public or private HTTPS repositories."],
   indexing: ["Indexing", "Run full or targeted indexing jobs."],
@@ -136,21 +137,35 @@ async function setLogCapture() {
 
 function renderFiles() {
   const filter = document.querySelector("#files-filter").value.toLowerCase();
+  renderFileBreadcrumbs();
   const rows = state.files
     .filter((file) => file.path.toLowerCase().includes(filter))
     .map((file) => `
       <tr>
-        <td class="path-cell">${file.path}</td>
-        <td>${file.extension || "file"}</td>
-        <td>${formatBytes(file.size_bytes)}</td>
+        <td class="path-cell">${
+          file.kind === "directory"
+            ? `<button class="link-button" data-open-dir="${encodeURIComponent(file.path)}">${file.name || file.path}/</button>`
+            : file.name || file.path
+        }</td>
+        <td>${file.kind === "directory" ? `directory (${file.child_count || 0})` : file.extension || "file"}</td>
+        <td>${file.kind === "directory" ? "-" : formatBytes(file.size_bytes)}</td>
         <td>${file.modified_time}</td>
         <td>
-          <button class="danger small" data-delete-file="${encodeURIComponent(file.path)}">Delete</button>
+          <button class="danger small" ${file.kind === "directory" && file.can_delete === false ? "disabled" : ""} data-delete-file="${encodeURIComponent(file.path)}">Delete</button>
         </td>
       </tr>
     `);
+  const parentRow = state.filesPath
+    ? `<tr><td class="path-cell"><button class="link-button" data-open-dir="${encodeURIComponent(parentPath(state.filesPath))}">../</button></td><td>parent</td><td>-</td><td>-</td><td>-</td></tr>`
+    : "";
   document.querySelector("#files-table").innerHTML =
-    rows.join("") || `<tr><td colspan="5" class="empty-cell">No files found.</td></tr>`;
+    parentRow + (rows.join("") || `<tr><td colspan="5" class="empty-cell">No entries found.</td></tr>`);
+  document.querySelectorAll("[data-open-dir]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.filesPath = decodeURIComponent(button.dataset.openDir);
+      runAction(refreshFiles);
+    });
+  });
   document.querySelectorAll("[data-delete-file]").forEach((button) => {
     button.addEventListener("click", () => {
       const path = decodeURIComponent(button.dataset.deleteFile);
@@ -159,17 +174,37 @@ function renderFiles() {
   });
 }
 
+function parentPath(path) {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function renderFileBreadcrumbs() {
+  const rootButton = `<button class="link-button" data-open-dir="">Root</button>`;
+  let current = "";
+  const parts = state.filesPath
+    .split("/")
+    .filter(Boolean)
+    .map((part) => {
+      current = current ? `${current}/${part}` : part;
+      return `<span>/</span><button class="link-button" data-open-dir="${encodeURIComponent(current)}">${part}</button>`;
+    });
+  document.querySelector("#files-breadcrumbs").innerHTML = [rootButton, ...parts].join("");
+}
+
 async function refreshFiles() {
   const scope = document.querySelector("#files-scope").value;
-  const data = await api(`/api/dashboard/files?scope=${scope}`);
-  state.files = data.files || [];
+  const data = await api(`/api/dashboard/files?scope=${scope}&path=${encodeURIComponent(state.filesPath)}`);
+  state.files = data.entries || data.files || [];
+  state.filesPath = data.path || "";
   renderFiles();
   markUpdated();
 }
 
 async function deleteFile(path) {
   const scope = document.querySelector("#files-scope").value;
-  const confirmed = window.confirm(`Delete ${path} from ${scope} memory?`);
+  const confirmed = window.confirm(`Delete ${path} from ${scope} memory? Empty directories only.`);
   if (!confirmed) return;
   await api("/api/dashboard/files", {
     method: "DELETE",
@@ -295,7 +330,10 @@ function bind() {
   document.querySelector("#log-source").addEventListener("change", () => runAction(refreshLogs));
   document.querySelector("#log-capture").addEventListener("change", () => runAction(setLogCapture));
   document.querySelector("#refresh-files").addEventListener("click", () => runAction(refreshFiles));
-  document.querySelector("#files-scope").addEventListener("change", () => runAction(refreshFiles));
+  document.querySelector("#files-scope").addEventListener("change", () => {
+    state.filesPath = "";
+    runAction(refreshFiles);
+  });
   document.querySelector("#files-filter").addEventListener("input", renderFiles);
   document.querySelector("#upload-form").addEventListener("submit", (event) => {
     runAction(() => uploadFiles(event), "Upload complete.");

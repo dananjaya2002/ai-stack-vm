@@ -36,9 +36,9 @@ import type {
 const tabs: Array<{ id: TabId; label: string; title: string; subtitle: string }> = [
   { id: "overview", label: "Overview", title: "Overview", subtitle: "Service health, storage, and system load." },
   { id: "logs", label: "Logs", title: "Logs", subtitle: "Proxy logs plus dashboard job and watcher output." },
-  { id: "files", label: "Memory Files", title: "Memory Files", subtitle: "Browse, filter, and delete memory files." },
+  { id: "files", label: "Files", title: "File Browser", subtitle: "Browse memory files and code repository folders." },
   { id: "upload", label: "Upload", title: "Upload", subtitle: "Add files to engineering or code memory." },
-  { id: "repos", label: "Repositories", title: "Repositories", subtitle: "Clone public or private HTTPS repositories." },
+  { id: "repos", label: "Repositories", title: "Repositories", subtitle: "Clone, update, and browse code repositories." },
   { id: "indexing", label: "Indexing", title: "Indexing", subtitle: "Run full or targeted indexing jobs." },
   { id: "watchers", label: "Watchers", title: "Watchers", subtitle: "Start and stop automatic reindex watchers." },
 ];
@@ -127,7 +127,11 @@ function App() {
   const [logCapture, setLogCapture] = useState(true);
   const [fileScope, setFileScope] = useState<Scope>("engineering");
   const [files, setFiles] = useState<MemoryFile[]>([]);
+  const [filePath, setFilePath] = useState("");
   const [fileFilter, setFileFilter] = useState("");
+  const [repoPath, setRepoPath] = useState("");
+  const [repoEntries, setRepoEntries] = useState<MemoryFile[]>([]);
+  const [repoFilter, setRepoFilter] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [watchers, setWatchers] = useState<Record<Scope, WatcherStatus> | null>(null);
   const [uploadResult, setUploadResult] = useState<string>("");
@@ -186,9 +190,17 @@ function App() {
     markUpdated();
   }
 
-  async function refreshFiles(scope = fileScope) {
-    const data = await dashboardApi.files(scope);
-    setFiles(data.files || []);
+  async function refreshFiles(scope = fileScope, path = filePath) {
+    const data = await dashboardApi.files(scope, path);
+    setFiles(data.entries || data.files || []);
+    setFilePath(data.path || "");
+    markUpdated();
+  }
+
+  async function refreshRepoEntries(path = repoPath) {
+    const data = await dashboardApi.files("code", path);
+    setRepoEntries(data.entries || data.files || []);
+    setRepoPath(data.path || "");
     markUpdated();
   }
 
@@ -209,13 +221,14 @@ function App() {
     if (tab === "logs") await refreshLogs();
     if (tab === "files") await refreshFiles();
     if (tab === "upload") await refreshLogs();
-    if (tab === "repos" || tab === "indexing") await refreshJobs();
+    if (tab === "repos") await Promise.all([refreshJobs(), refreshRepoEntries()]);
+    if (tab === "indexing") await refreshJobs();
     if (tab === "watchers") await refreshWatchers();
   }
 
   useEffect(() => {
     void run("initial", async () => {
-      await Promise.all([refreshStatus(), refreshLogs(), refreshFiles(), refreshJobs(), refreshWatchers()]);
+      await Promise.all([refreshStatus(), refreshLogs(), refreshFiles(), refreshRepoEntries(), refreshJobs(), refreshWatchers()]);
     });
   }, []);
 
@@ -238,20 +251,30 @@ function App() {
     [files, fileFilter],
   );
 
+  const filteredRepoEntries = useMemo(
+    () => repoEntries.filter((entry) => entry.path.toLowerCase().includes(repoFilter.toLowerCase())),
+    [repoEntries, repoFilter],
+  );
+
   async function changeLogCapture(enabled: boolean) {
     setLogCapture(enabled);
     await run("log-capture", () => dashboardApi.setLogCapture(enabled), `Temporary log capture ${enabled ? "enabled" : "disabled"}.`);
   }
 
-  async function deleteFile(file: MemoryFile) {
-    const confirmed = window.confirm(`Delete ${file.path} from ${fileScope} memory?`);
+  async function deleteEntry(scope: Scope, entry: MemoryFile, afterDelete: () => Promise<void>) {
+    if (entry.kind === "directory" && entry.can_delete === false) {
+      showNotice("Only empty directories can be deleted.", "bad");
+      return;
+    }
+    const kind = entry.kind === "directory" ? "empty directory" : "file";
+    const confirmed = window.confirm(`Delete ${kind} ${entry.path} from ${scope} memory?`);
     if (!confirmed) return;
     await run("delete-file", async () => {
-      await dashboardApi.deleteFile(fileScope, file.path);
-      await refreshFiles();
+      await dashboardApi.deleteFile(scope, entry.path);
+      await afterDelete();
       await refreshStatus();
       await refreshLogs();
-    }, "File deleted.");
+    }, `${entry.kind === "directory" ? "Directory" : "File"} deleted.`);
   }
 
   async function uploadFiles(event: FormEvent<HTMLFormElement>) {
@@ -267,7 +290,7 @@ function App() {
       const data = await dashboardApi.upload(scope, input.files as FileList);
       setUploadResult(JSON.stringify(data, null, 2));
       setFileScope(scope);
-      await refreshFiles(scope);
+      await refreshFiles(scope, "");
       await refreshStatus();
       await refreshLogs();
       form.reset();
@@ -288,7 +311,7 @@ function App() {
       const result = await dashboardApi.cloneRepo(payload);
       setCloneResult(JSON.stringify(result, null, 2));
       form.reset();
-      await refreshJobs();
+      await Promise.all([refreshJobs(), refreshRepoEntries()]);
       await refreshLogs();
     }, "Repository job started.");
   }
@@ -387,17 +410,33 @@ function App() {
               scope={fileScope}
               setScope={(scope) => {
                 setFileScope(scope);
-                void run("files", () => refreshFiles(scope));
+                setFilePath("");
+                void run("files", () => refreshFiles(scope, ""));
               }}
               files={filteredFiles}
+              path={filePath}
+              setPath={(path) => void run("files", () => refreshFiles(fileScope, path))}
               filter={fileFilter}
               setFilter={setFileFilter}
               refresh={() => run("files", () => refreshFiles())}
-              deleteFile={deleteFile}
+              deleteEntry={(entry) => deleteEntry(fileScope, entry, () => refreshFiles(fileScope, filePath))}
             />
           )}
           {activeTab === "upload" && <UploadTab onSubmit={uploadFiles} result={uploadResult} busy={busy === "upload"} />}
-          {activeTab === "repos" && <RepositoriesTab onSubmit={cloneRepo} result={cloneResult} busy={busy === "clone"} />}
+          {activeTab === "repos" && (
+            <RepositoriesTab
+              onSubmit={cloneRepo}
+              result={cloneResult}
+              busy={busy === "clone"}
+              entries={filteredRepoEntries}
+              path={repoPath}
+              setPath={(path) => void run("repo-files", () => refreshRepoEntries(path))}
+              filter={repoFilter}
+              setFilter={setRepoFilter}
+              refresh={() => run("repo-files", () => refreshRepoEntries())}
+              deleteEntry={(entry) => deleteEntry("code", entry, () => refreshRepoEntries(repoPath))}
+            />
+          )}
           {activeTab === "indexing" && <IndexingTab onSubmit={startIndex} jobs={jobs} refresh={() => run("jobs", refreshJobs)} busy={busy === "index"} />}
           {activeTab === "watchers" && <WatchersTab watchers={watchers} action={watcherAction} />}
         </main>
@@ -577,69 +616,149 @@ function LogsTab({
   );
 }
 
-function FilesTab({
-  scope,
-  setScope,
-  files,
-  filter,
-  setFilter,
-  refresh,
-  deleteFile,
+function parentPath(path: string) {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function Breadcrumbs({ path, setPath }: { path: string; setPath: (path: string) => void }) {
+  const parts = path.split("/").filter(Boolean);
+  let current = "";
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <button type="button" onClick={() => setPath("")} className="font-bold text-ocean hover:underline">
+        Root
+      </button>
+      {parts.map((part) => {
+        current = current ? `${current}/${part}` : part;
+        const target = current;
+        return (
+          <span key={target} className="inline-flex items-center gap-2">
+            <span className="text-muted">/</span>
+            <button type="button" onClick={() => setPath(target)} className="font-bold text-ocean hover:underline">
+              {part}
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function DirectoryTable({
+  entries,
+  path,
+  setPath,
+  deleteEntry,
 }: {
-  scope: Scope;
-  setScope: (scope: Scope) => void;
-  files: MemoryFile[];
-  filter: string;
-  setFilter: (filter: string) => void;
-  refresh: () => void;
-  deleteFile: (file: MemoryFile) => void;
+  entries: MemoryFile[];
+  path: string;
+  setPath: (path: string) => void;
+  deleteEntry: (entry: MemoryFile) => void;
 }) {
   return (
-    <Panel>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <select value={scope} onChange={(event) => setScope(event.target.value as Scope)} className="control">
-          <option value="engineering">Engineering memory</option>
-          <option value="code">Code memory</option>
-        </select>
-        <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px]" type="search" placeholder="Filter files" />
-        <Button onClick={refresh}>Refresh</Button>
-      </div>
-      <div className="overflow-x-auto rounded-lg border border-line">
-        <table className="min-w-full divide-y divide-line text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase text-muted">
+    <div className="overflow-x-auto rounded-lg border border-line">
+      <table className="min-w-full divide-y divide-line text-sm">
+        <thead className="bg-slate-50 text-left text-xs uppercase text-muted">
+          <tr>
+            <th className="px-4 py-3">Name</th>
+            <th className="px-4 py-3">Type</th>
+            <th className="px-4 py-3">Size</th>
+            <th className="px-4 py-3">Modified</th>
+            <th className="px-4 py-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line bg-white">
+          {path && (
             <tr>
-              <th className="px-4 py-3">Path</th>
-              <th className="px-4 py-3">Type</th>
-              <th className="px-4 py-3">Size</th>
-              <th className="px-4 py-3">Modified</th>
-              <th className="px-4 py-3">Actions</th>
+              <td className="max-w-[520px] break-words px-4 py-3 font-mono text-xs">
+                <button type="button" className="font-bold text-ocean hover:underline" onClick={() => setPath(parentPath(path))}>
+                  ../
+                </button>
+              </td>
+              <td className="px-4 py-3">parent</td>
+              <td className="px-4 py-3">-</td>
+              <td className="px-4 py-3">-</td>
+              <td className="px-4 py-3">-</td>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-line bg-white">
-            {files.length === 0 ? (
-              <tr>
-                <td className="px-4 py-8 text-center text-muted" colSpan={5}>
-                  No files found.
-                </td>
-              </tr>
-            ) : (
-              files.map((file) => (
-                <tr key={file.path}>
-                  <td className="max-w-[520px] break-words px-4 py-3 font-mono text-xs">{file.path}</td>
-                  <td className="px-4 py-3">{file.extension || "file"}</td>
-                  <td className="px-4 py-3">{formatBytes(file.size_bytes)}</td>
-                  <td className="px-4 py-3">{formatTime(file.modified_time)}</td>
+          )}
+          {entries.length === 0 ? (
+            <tr>
+              <td className="px-4 py-8 text-center text-muted" colSpan={5}>
+                No entries found.
+              </td>
+            </tr>
+          ) : (
+            entries.map((entry) => {
+              const isDirectory = entry.kind === "directory";
+              const blockedDelete = isDirectory && entry.can_delete === false;
+              return (
+                <tr key={entry.path}>
+                  <td className="max-w-[520px] break-words px-4 py-3 font-mono text-xs">
+                    {isDirectory ? (
+                      <button type="button" onClick={() => setPath(entry.path)} className="font-bold text-ocean hover:underline">
+                        {entry.name || entry.path}/
+                      </button>
+                    ) : (
+                      entry.name || entry.path
+                    )}
+                  </td>
                   <td className="px-4 py-3">
-                    <Button variant="danger" onClick={() => deleteFile(file)}>
+                    {isDirectory ? `directory (${entry.child_count ?? 0})` : entry.extension || "file"}
+                  </td>
+                  <td className="px-4 py-3">{isDirectory ? "-" : formatBytes(entry.size_bytes)}</td>
+                  <td className="px-4 py-3">{formatTime(entry.modified_time)}</td>
+                  <td className="px-4 py-3">
+                    <Button variant="danger" disabled={blockedDelete} title={blockedDelete ? "Only empty directories can be deleted." : undefined} onClick={() => deleteEntry(entry)}>
                       Delete
                     </Button>
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function FilesTab({
+  scope,
+  setScope,
+  files,
+  path,
+  setPath,
+  filter,
+  setFilter,
+  refresh,
+  deleteEntry,
+}: {
+  scope: Scope;
+  setScope: (scope: Scope) => void;
+  files: MemoryFile[];
+  path: string;
+  setPath: (path: string) => void;
+  filter: string;
+  setFilter: (filter: string) => void;
+  refresh: () => void;
+  deleteEntry: (entry: MemoryFile) => void;
+}) {
+  return (
+    <Panel>
+      <div className="mb-4 grid gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <select value={scope} onChange={(event) => setScope(event.target.value as Scope)} className="control max-w-xs">
+            <option value="engineering">Engineering memory</option>
+            <option value="code">Code repositories</option>
+          </select>
+          <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px] max-w-sm" type="search" placeholder="Filter current directory" />
+          <Button onClick={refresh}>Refresh</Button>
+        </div>
+        <Breadcrumbs path={path} setPath={setPath} />
       </div>
+      <DirectoryTable entries={files} path={path} setPath={setPath} deleteEntry={deleteEntry} />
     </Panel>
   );
 }
@@ -666,9 +785,31 @@ function UploadTab({ onSubmit, result, busy }: { onSubmit: (event: FormEvent<HTM
   );
 }
 
-function RepositoriesTab({ onSubmit, result, busy }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; result: string; busy: boolean }) {
+function RepositoriesTab({
+  onSubmit,
+  result,
+  busy,
+  entries,
+  path,
+  setPath,
+  filter,
+  setFilter,
+  refresh,
+  deleteEntry,
+}: {
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  result: string;
+  busy: boolean;
+  entries: MemoryFile[];
+  path: string;
+  setPath: (path: string) => void;
+  filter: string;
+  setFilter: (filter: string) => void;
+  refresh: () => void;
+  deleteEntry: (entry: MemoryFile) => void;
+}) {
   return (
-    <div className="grid gap-5 xl:grid-cols-[520px_1fr]">
+    <div className="grid gap-5">
       <Panel>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Field label="Repository HTTPS URL">
@@ -687,7 +828,19 @@ function RepositoriesTab({ onSubmit, result, busy }: { onSubmit: (event: FormEve
           <Button disabled={busy} type="submit">Clone or Update</Button>
         </form>
       </Panel>
-      <pre className="result-box">{result}</pre>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <Panel>
+          <div className="mb-4 grid gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px] max-w-sm" type="search" placeholder="Filter repository directory" />
+              <Button onClick={refresh}>Refresh repository view</Button>
+            </div>
+            <Breadcrumbs path={path} setPath={setPath} />
+          </div>
+          <DirectoryTable entries={entries} path={path} setPath={setPath} deleteEntry={deleteEntry} />
+        </Panel>
+        <pre className="result-box">{result}</pre>
+      </div>
     </div>
   );
 }

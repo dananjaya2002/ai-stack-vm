@@ -20,7 +20,7 @@
         <nav class="tabs" aria-label="Dashboard sections">
           <button class="tab-button active" data-tab="overview">Overview</button>
           <button class="tab-button" data-tab="logs">Logs</button>
-          <button class="tab-button" data-tab="files">Memory Files</button>
+          <button class="tab-button" data-tab="files">Files</button>
           <button class="tab-button" data-tab="upload">Upload</button>
           <button class="tab-button" data-tab="repos">Repositories</button>
           <button class="tab-button" data-tab="indexing">Indexing</button>
@@ -78,6 +78,7 @@
             <input id="files-filter" type="search" placeholder="Filter files" />
             <button id="refresh-files">Refresh</button>
           </div>
+          <div id="files-breadcrumbs" class="breadcrumbs"></div>
           <div class="table-wrap">
             <table>
               <thead>

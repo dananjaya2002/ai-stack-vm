@@ -21,7 +21,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const dashboardApi = {
   status: () => request<DashboardStatus>("/api/dashboard/status"),
-  files: (scope: Scope) => request<FilesResponse>(`/api/dashboard/files?scope=${encodeURIComponent(scope)}`),
+  files: (scope: Scope, path = "") =>
+    request<FilesResponse>(
+      `/api/dashboard/files?scope=${encodeURIComponent(scope)}&path=${encodeURIComponent(path)}`,
+    ),
   deleteFile: (scope: Scope, path: string) =>
     request<{ ok: boolean }>("/api/dashboard/files", {
       method: "DELETE",

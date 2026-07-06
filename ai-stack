@@ -942,6 +942,8 @@ Code questions:
 - What does the sample Python app do?
 - Which function formats character summaries?
 - Where is the demo data loaded?
+- Which files are in the sample repository app?
+- Where is repository metadata summarized?
 EOF
 }
 
@@ -967,17 +969,14 @@ EOF
 
 cmd_demo_clean() {
   load_env
-  local memory_dst code_dst
+  local memory_dst code_src_root code_dst_root repo_dir repo_name code_dst
   memory_dst="${AI_STACK_HOME}/memory/engineering-memory/demo"
-  code_dst="${AI_STACK_HOME}/memory/code-memory/sample-python-app"
+  code_src_root="${ROOT_DIR}/demo/code-memory"
+  code_dst_root="${AI_STACK_HOME}/memory/code-memory"
 
   case "${memory_dst}" in
     "${AI_STACK_HOME}/memory/engineering-memory/demo") ;;
     *) fail "refusing to remove unexpected memory path: ${memory_dst}" ;;
-  esac
-  case "${code_dst}" in
-    "${AI_STACK_HOME}/memory/code-memory/sample-python-app") ;;
-    *) fail "refusing to remove unexpected code path: ${code_dst}" ;;
   esac
 
   if [[ -d "${memory_dst}" ]]; then
@@ -987,12 +986,23 @@ cmd_demo_clean() {
     info "demo memory directory was not present"
   fi
 
-  if [[ -d "${code_dst}" ]]; then
-    rm -rf "${code_dst}"
-    info "removed ${code_dst}"
-  else
-    info "demo code directory was not present"
-  fi
+  shopt -s nullglob
+  for repo_dir in "${code_src_root}"/*; do
+    [[ -d "${repo_dir}" ]] || continue
+    repo_name="$(basename "${repo_dir}")"
+    code_dst="${code_dst_root}/${repo_name}"
+    case "${code_dst}" in
+      "${AI_STACK_HOME}/memory/code-memory/"*) ;;
+      *) fail "refusing to remove unexpected code path: ${code_dst}" ;;
+    esac
+    if [[ -d "${code_dst}" ]]; then
+      rm -rf "${code_dst}"
+      info "removed ${code_dst}"
+    else
+      info "demo code directory was not present: ${code_dst}"
+    fi
+  done
+  shopt -u nullglob
 
   warn "Qdrant may still contain previously indexed demo vectors until you re-index or reset collections."
 }
@@ -1009,18 +1019,29 @@ cmd_demo() {
   cmd_init
   load_env
 
-  local memory_src code_src memory_dst code_dst existing action
+  local memory_src code_src_root memory_dst code_dst_root existing action repo_dir repo_name code_dst
   memory_src="${ROOT_DIR}/demo/engineering-memory"
-  code_src="${ROOT_DIR}/demo/code-memory/sample-python-app"
+  code_src_root="${ROOT_DIR}/demo/code-memory"
   memory_dst="${AI_STACK_HOME}/memory/engineering-memory/demo"
-  code_dst="${AI_STACK_HOME}/memory/code-memory/sample-python-app"
+  code_dst_root="${AI_STACK_HOME}/memory/code-memory"
   existing=0
 
   [[ -d "${memory_src}" ]] || fail "missing demo source: ${memory_src}"
-  [[ -d "${code_src}" ]] || fail "missing demo source: ${code_src}"
+  [[ -d "${code_src_root}" ]] || fail "missing demo source: ${code_src_root}"
 
-  if [[ -e "${memory_dst}" || -e "${code_dst}" ]]; then
+  if [[ -e "${memory_dst}" ]]; then
     existing=1
+  fi
+  shopt -s nullglob
+  for repo_dir in "${code_src_root}"/*; do
+    [[ -d "${repo_dir}" ]] || continue
+    repo_name="$(basename "${repo_dir}")"
+    if [[ -e "${code_dst_root}/${repo_name}" ]]; then
+      existing=1
+    fi
+  done
+
+  if (( existing == 1 )); then
     action="$(prompt_demo_existing)"
   else
     action="replace"
@@ -1028,18 +1049,49 @@ cmd_demo() {
 
   if [[ "${action}" == "replace" ]]; then
     if (( existing == 1 )); then
-      rm -rf "${memory_dst}" "${code_dst}"
+      rm -rf "${memory_dst}"
+      for repo_dir in "${code_src_root}"/*; do
+        [[ -d "${repo_dir}" ]] || continue
+        repo_name="$(basename "${repo_dir}")"
+        rm -rf "${code_dst_root}/${repo_name}"
+      done
     fi
-    mkdir -p "$(dirname "${memory_dst}")" "$(dirname "${code_dst}")"
+    mkdir -p "$(dirname "${memory_dst}")" "${code_dst_root}"
     cp -R "${memory_src}" "${memory_dst}"
-    cp -R "${code_src}" "${code_dst}"
+    for repo_dir in "${code_src_root}"/*; do
+      [[ -d "${repo_dir}" ]] || continue
+      repo_name="$(basename "${repo_dir}")"
+      cp -R "${repo_dir}" "${code_dst_root}/${repo_name}"
+    done
     info "copied demo content into ${AI_STACK_HOME}/memory"
   else
-    info "skipped copying demo content"
+    if [[ ! -e "${memory_dst}" ]]; then
+      mkdir -p "$(dirname "${memory_dst}")"
+      cp -R "${memory_src}" "${memory_dst}"
+      info "copied missing demo memory into ${memory_dst}"
+    fi
+    mkdir -p "${code_dst_root}"
+    for repo_dir in "${code_src_root}"/*; do
+      [[ -d "${repo_dir}" ]] || continue
+      repo_name="$(basename "${repo_dir}")"
+      if [[ ! -e "${code_dst_root}/${repo_name}" ]]; then
+        cp -R "${repo_dir}" "${code_dst_root}/${repo_name}"
+        info "copied missing demo repo into ${code_dst_root}/${repo_name}"
+      fi
+    done
+    info "skipped overwriting existing demo content"
   fi
+  shopt -u nullglob
 
   cmd_index memory
-  cmd_index code "${code_dst}"
+  shopt -s nullglob
+  for repo_dir in "${code_src_root}"/*; do
+    [[ -d "${repo_dir}" ]] || continue
+    repo_name="$(basename "${repo_dir}")"
+    code_dst="${code_dst_root}/${repo_name}"
+    cmd_index code "${code_dst}"
+  done
+  shopt -u nullglob
   print_demo_questions
 }
 

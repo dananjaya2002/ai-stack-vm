@@ -56,15 +56,22 @@ export interface DashboardStatus {
 
 export interface MemoryFile {
   scope: Scope;
+  name?: string;
   path: string;
-  size_bytes: number;
+  kind?: "file" | "directory";
+  size_bytes: number | null;
   modified_time: string;
   extension: string;
+  child_count?: number | null;
+  can_delete?: boolean;
 }
 
 export interface FilesResponse {
   ok: boolean;
   scope: Scope;
+  path?: string;
+  root?: string;
+  entries?: MemoryFile[];
   files: MemoryFile[];
 }
 
