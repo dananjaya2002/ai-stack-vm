@@ -244,6 +244,7 @@ SECURITY_MODE=development
 AI_STACK_API_KEY=
 BIND_HOST=127.0.0.1
 OPEN_WEBUI_BIND_HOST=0.0.0.0
+DASHBOARD_BIND_HOST=0.0.0.0
 ENABLE_RATE_LIMIT=true
 RATE_LIMIT_PER_MINUTE=60
 
@@ -266,8 +267,9 @@ Real `.env` files are ignored by Git. The templates committed to the repo are
 The model, Qdrant, memory-proxy, and code-proxy are local-only by default.
 Compose publishes those host ports on `BIND_HOST=127.0.0.1`, so they are
 reachable from the local machine but not from the public network. Open WebUI is
-separately controlled by `OPEN_WEBUI_BIND_HOST` and defaults to `0.0.0.0` for
-VM/OpenShift route development.
+separately controlled by `OPEN_WEBUI_BIND_HOST`, and the dashboard is controlled
+by `DASHBOARD_BIND_HOST`; both default to `0.0.0.0` for VM/OpenShift route
+development.
 
 To expose all stack services on a trusted LAN, explicitly set:
 
