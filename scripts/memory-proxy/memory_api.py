@@ -1,3 +1,4 @@
+import sys
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -11,13 +12,21 @@ import json
 import time
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from proxy_security import install_security_middleware, validate_proxy_environment
+
 LOG_FILE = Path(os.getenv("MEMORY_API_LOG_FILE", "/tmp/memory_api.log"))
 ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "false").lower() == "true"
 
 
 # CONFIG
+MEMORY_DIR = os.getenv("MEMORY_DIR", "/memory")
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+try:
+    QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+except ValueError:
+    print("memory-proxy configuration error:\n- QDRANT_PORT must be an integer", file=sys.stderr)
+    raise SystemExit(1)
 COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "engineering-memory")
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:8082/v1")
@@ -28,7 +37,20 @@ TOP_K = int(os.getenv("MEMORY_TOP_K", "5"))
 SCORE_THRESHOLD = float(os.getenv("MEMORY_SCORE_THRESHOLD", "0.5"))
 
 
+validate_proxy_environment(
+    "memory-proxy",
+    required_vars=[
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "QDRANT_HOST",
+        "QDRANT_PORT",
+        "QDRANT_COLLECTION",
+    ],
+    required_paths=[MEMORY_DIR],
+)
+
 app = FastAPI()
+install_security_middleware(app, "memory-proxy")
 
 # INIT
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)

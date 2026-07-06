@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import sys
 from pathlib import Path
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
@@ -13,11 +14,18 @@ from sentence_transformers import SentenceTransformer
 from functools import lru_cache
 
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from proxy_security import install_security_middleware, validate_proxy_environment
+
 
 app = FastAPI(title="Code Proxy API")
 
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+try:
+    QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
+except ValueError:
+    print("code-proxy configuration error:\n- QDRANT_PORT must be an integer", file=sys.stderr)
+    raise SystemExit(1)
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "code-memory")
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:8082/v1").rstrip("/")
@@ -36,6 +44,20 @@ MAX_CHUNKS_PER_FILE = int(os.getenv("MAX_CHUNKS_PER_FILE", "2"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "45000"))
 MAX_CHUNK_CHARS = int(os.getenv("MAX_CHUNK_CHARS", "4000"))
 
+validate_proxy_environment(
+    "code-proxy",
+    required_vars=[
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "QDRANT_HOST",
+        "QDRANT_PORT",
+        "QDRANT_COLLECTION",
+        "REPOS_ROOT",
+    ],
+    required_paths=[str(REPOS_ROOT)],
+)
+
+install_security_middleware(app, "code-proxy")
 
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 embedder = SentenceTransformer(EMBED_MODEL_NAME)

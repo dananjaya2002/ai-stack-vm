@@ -4,7 +4,7 @@ services:
     image: docker.io/qdrant/qdrant:latest
     container_name: qdrant
     ports:
-      - "6333:6333"
+      - "${BIND_HOST:-127.0.0.1}:6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -25,8 +25,14 @@ services:
     container_name: memory-proxy
     env_file:
       - scripts/memory-proxy/memory-api.env
+    environment:
+      SECURITY_MODE: ${SECURITY_MODE:-development}
+      AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
+      ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      MEMORY_DIR: /memory
     ports:
-      - "9002:9002"
+      - "${BIND_HOST:-127.0.0.1}:9002:9002"
     depends_on:
       - qdrant
     volumes:
@@ -50,8 +56,13 @@ services:
     container_name: code-proxy
     env_file:
       - scripts/code-proxy/code-proxy.env
+    environment:
+      SECURITY_MODE: ${SECURITY_MODE:-development}
+      AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
+      ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
     ports:
-      - "9001:9001"
+      - "${BIND_HOST:-127.0.0.1}:9001:9001"
     depends_on:
       - qdrant
     volumes:
@@ -71,7 +82,7 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: vm-llama
     ports:
-      - "8082:8082" # Accessible on your VM host at port 8082
+      - "${BIND_HOST:-127.0.0.1}:8082:8082" # Accessible on your VM host at port 8082
     volumes:
       - ${AI_STACK_HOME}/models:/models:ro
     command: [
@@ -99,7 +110,7 @@ services:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     ports:
-      - "8080:8080"
+      - "${BIND_HOST:-127.0.0.1}:8080:8080"
     volumes:
       - open_webui_data:/app/backend/data
     restart: unless-stopped

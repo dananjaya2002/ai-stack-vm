@@ -37,6 +37,7 @@ Usage:
   ./ai-stack index code <repo-path>
   ./ai-stack search code "query"
   ./ai-stack search memory "query"
+  ./ai-stack demo [clean]
 
 First run:
   ./ai-stack install
@@ -113,6 +114,11 @@ load_env() {
   LLAMA_CONTEXT="${LLAMA_CONTEXT:-8192}"
   LLAMA_BATCH="${LLAMA_BATCH:-512}"
   LLAMA_UBATCH="${LLAMA_UBATCH:-256}"
+  SECURITY_MODE="${SECURITY_MODE:-development}"
+  AI_STACK_API_KEY="${AI_STACK_API_KEY:-}"
+  BIND_HOST="${BIND_HOST:-127.0.0.1}"
+  ENABLE_RATE_LIMIT="${ENABLE_RATE_LIMIT:-true}"
+  RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-60}"
 }
 
 set_env_var() {
@@ -293,6 +299,12 @@ MODEL_NAME=${DEFAULT_MODEL_NAME}
 MODEL_PROFILE=laptop
 MODEL_URL=${DEFAULT_MODEL_URL}
 MODEL_SHA256=
+
+SECURITY_MODE=development
+AI_STACK_API_KEY=
+BIND_HOST=127.0.0.1
+ENABLE_RATE_LIMIT=true
+RATE_LIMIT_PER_MINUTE=60
 
 LLAMA_THREADS=${threads}
 LLAMA_CONTEXT=8192
@@ -608,6 +620,11 @@ write_proxy_envs() {
 CODE_PROXY_LOGS=true
 CODE_PROXY_LOG_FILE=/logs/code-proxy/code_proxy.log
 
+SECURITY_MODE=development
+AI_STACK_API_KEY=
+ENABLE_RATE_LIMIT=true
+RATE_LIMIT_PER_MINUTE=60
+
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
 QDRANT_COLLECTION=code-memory
@@ -632,9 +649,15 @@ EOF
 MEMORY_API_LOGS=false
 MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
 
+SECURITY_MODE=development
+AI_STACK_API_KEY=
+ENABLE_RATE_LIMIT=true
+RATE_LIMIT_PER_MINUTE=60
+
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
 QDRANT_COLLECTION=engineering-memory
+MEMORY_DIR=/memory
 
 LLM_BASE_URL=http://vm-llama:8082/v1
 LLM_MODEL=qwen2.5-coder-3b-instruct
@@ -833,7 +856,12 @@ cmd_restart() {
 }
 
 cmd_status() {
+  load_env
   compose ps
+  local curl_args=(--silent --fail --max-time 3)
+  if [[ -n "${AI_STACK_API_KEY}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
   for endpoint in \
     "qdrant:http://localhost:6333" \
     "llama:http://localhost:8082/v1/models" \
@@ -841,7 +869,7 @@ cmd_status() {
     "memory-proxy:http://localhost:9002/v1/models"; do
     local name="${endpoint%%:*}"
     local url="${endpoint#*:}"
-    if curl --silent --fail --max-time 3 "${url}" >/dev/null; then
+    if curl "${curl_args[@]}" "${url}" >/dev/null; then
       info "${name}: healthy"
     else
       warn "${name}: not responding at ${url}"
@@ -896,6 +924,123 @@ cmd_search() {
   esac
 }
 
+print_demo_questions() {
+  cat <<'EOF'
+Demo content installed.
+
+Try asking:
+
+Memory questions:
+- Who is Elyndor Vael?
+- What is the Heart of Memory?
+- Who was Captain Lysara Thornwind?
+- What was Aurora's Edge?
+
+Code questions:
+- What does the sample Python app do?
+- Which function formats character summaries?
+- Where is the demo data loaded?
+EOF
+}
+
+prompt_demo_existing() {
+  local choice
+  cat >&2 <<'EOF'
+Demo files already exist.
+
+[r] Replace demo files and re-index
+[s] Skip copying and re-index existing demo files
+[c] Cancel
+EOF
+  while true; do
+    read -r -p "Choose [r/s/c]: " choice || exit 0
+    case "${choice}" in
+      r|R) printf 'replace'; return ;;
+      s|S) printf 'skip'; return ;;
+      c|C|"") info "demo cancelled"; exit 0 ;;
+      *) warn "invalid choice: ${choice}" ;;
+    esac
+  done
+}
+
+cmd_demo_clean() {
+  load_env
+  local memory_dst code_dst
+  memory_dst="${AI_STACK_HOME}/memory/engineering-memory/demo"
+  code_dst="${AI_STACK_HOME}/memory/code-memory/sample-python-app"
+
+  case "${memory_dst}" in
+    "${AI_STACK_HOME}/memory/engineering-memory/demo") ;;
+    *) fail "refusing to remove unexpected memory path: ${memory_dst}" ;;
+  esac
+  case "${code_dst}" in
+    "${AI_STACK_HOME}/memory/code-memory/sample-python-app") ;;
+    *) fail "refusing to remove unexpected code path: ${code_dst}" ;;
+  esac
+
+  if [[ -d "${memory_dst}" ]]; then
+    rm -rf "${memory_dst}"
+    info "removed ${memory_dst}"
+  else
+    info "demo memory directory was not present"
+  fi
+
+  if [[ -d "${code_dst}" ]]; then
+    rm -rf "${code_dst}"
+    info "removed ${code_dst}"
+  else
+    info "demo code directory was not present"
+  fi
+
+  warn "Qdrant may still contain previously indexed demo vectors until you re-index or reset collections."
+}
+
+cmd_demo() {
+  local sub="${1:-}"
+  if [[ "${sub}" == "clean" ]]; then
+    cmd_demo_clean
+    return
+  elif [[ -n "${sub}" ]]; then
+    fail "usage: ./ai-stack demo [clean]"
+  fi
+
+  cmd_init
+  load_env
+
+  local memory_src code_src memory_dst code_dst existing action
+  memory_src="${ROOT_DIR}/demo/engineering-memory"
+  code_src="${ROOT_DIR}/demo/code-memory/sample-python-app"
+  memory_dst="${AI_STACK_HOME}/memory/engineering-memory/demo"
+  code_dst="${AI_STACK_HOME}/memory/code-memory/sample-python-app"
+  existing=0
+
+  [[ -d "${memory_src}" ]] || fail "missing demo source: ${memory_src}"
+  [[ -d "${code_src}" ]] || fail "missing demo source: ${code_src}"
+
+  if [[ -e "${memory_dst}" || -e "${code_dst}" ]]; then
+    existing=1
+    action="$(prompt_demo_existing)"
+  else
+    action="replace"
+  fi
+
+  if [[ "${action}" == "replace" ]]; then
+    if (( existing == 1 )); then
+      rm -rf "${memory_dst}" "${code_dst}"
+    fi
+    mkdir -p "$(dirname "${memory_dst}")" "$(dirname "${code_dst}")"
+    cp -R "${memory_src}" "${memory_dst}"
+    cp -R "${code_src}" "${code_dst}"
+    info "copied demo content into ${AI_STACK_HOME}/memory"
+  else
+    info "skipped copying demo content"
+  fi
+
+  cmd_index memory
+  cmd_index code "${code_dst}"
+  print_demo_questions
+}
+
 main() {
   cd "${ROOT_DIR}"
   local command="${1:-help}"
@@ -916,6 +1061,7 @@ main() {
     logs) cmd_logs "$@" ;;
     index) cmd_index "$@" ;;
     search) cmd_search "$@" ;;
+    demo) cmd_demo "$@" ;;
     model)
       local sub="${1:-}"
       shift || true

@@ -149,6 +149,7 @@ Useful daily commands:
 ./ai-stack index code <repo-path>
 ./ai-stack search code "query"
 ./ai-stack search memory "query"
+./ai-stack demo [clean]
 ```
 
 ## Configuration
@@ -172,6 +173,12 @@ MODEL_PROFILE=laptop
 MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf
 MODEL_SHA256=
 
+SECURITY_MODE=development
+AI_STACK_API_KEY=
+BIND_HOST=127.0.0.1
+ENABLE_RATE_LIMIT=true
+RATE_LIMIT_PER_MINUTE=60
+
 LLAMA_THREADS=6
 LLAMA_CONTEXT=8192
 LLAMA_BATCH=512
@@ -185,6 +192,63 @@ LLAMA_MEMORY_RESERVATION=8gb
 Real `.env` files are ignored by Git. The templates committed to the repo are
 `.env.example`, `scripts/code-proxy/.example.code-proxy.env`, and
 `scripts/memory-proxy/.example.memory-api.env`, and `.example.dashboard.env`.
+
+## Security
+
+The stack is local-only by default. Compose publishes host ports on
+`BIND_HOST=127.0.0.1`, so Open WebUI, Qdrant, llama.cpp, memory-proxy, and
+code-proxy are reachable from the local machine but not from the public network.
+To expose the stack on a trusted LAN, explicitly set:
+
+```env
+BIND_HOST=0.0.0.0
+```
+
+Do not expose OpenAI-compatible endpoints to the internet without authentication
+and HTTPS. They can run model calls, retrieve private memory/code context, and
+consume local compute.
+
+Both proxies support bearer-token authentication:
+
+```env
+SECURITY_MODE=production
+AI_STACK_API_KEY=replace-with-a-long-random-secret
+```
+
+Clients must then send:
+
+```http
+Authorization: Bearer <AI_STACK_API_KEY>
+```
+
+In `SECURITY_MODE=development`, an empty `AI_STACK_API_KEY` is allowed for easy
+local testing, but the proxy prints a startup warning. In
+`SECURITY_MODE=production`, an empty key fails startup with a clear configuration
+error.
+
+Both proxies validate required startup configuration such as `LLM_BASE_URL`,
+Qdrant connection settings, collection names, model names, and mounted memory
+paths. Missing or invalid values are reported before the service starts.
+
+Basic rate limiting is enabled by default:
+
+```env
+ENABLE_RATE_LIMIT=true
+RATE_LIMIT_PER_MINUTE=60
+```
+
+The limit is per client IP per proxy process. Requests over the limit return
+HTTP `429`.
+
+For HTTPS, use a reverse proxy such as Caddy. A starting point is provided at:
+
+```text
+docker/caddy/Caddyfile.example
+```
+
+Use local-only mode for single-machine development, LAN mode only on trusted
+private networks, and HTTPS reverse proxy mode when browsers or clients need to
+connect over a network boundary.
 
 ## Interactive Installer
 
@@ -370,6 +434,57 @@ Run the code watcher directly:
 python3 scripts/watcher/watch_code.py "$AI_STACK_HOME/memory/code-memory"
 ```
 
+## Demo Mode
+
+Run the demo installer:
+
+```bash
+./ai-stack demo
+```
+
+It copies fictional engineering memory into:
+
+```text
+$AI_STACK_HOME/memory/engineering-memory/demo/
+```
+
+It copies the sample Python app into:
+
+```text
+$AI_STACK_HOME/memory/code-memory/sample-python-app/
+```
+
+Then it runs the existing memory and code indexers. If those demo targets already
+exist, the command asks whether to replace them, skip copying and re-index, or
+cancel.
+
+Try these memory questions after indexing:
+
+```text
+Who is Elyndor Vael?
+What is the Heart of Memory?
+Who was Captain Lysara Thornwind?
+What was Aurora's Edge?
+```
+
+Try these code questions:
+
+```text
+What does the sample Python app do?
+Which function formats character summaries?
+Where is the demo data loaded?
+```
+
+Clean only demo files with:
+
+```bash
+./ai-stack demo clean
+```
+
+This removes only the demo memory folder and `sample-python-app` demo repo. It
+does not remove other memory/code files. Previously indexed Qdrant vectors may
+remain until you re-index or reset the relevant collections.
+
 ## API Endpoints
 
 Both proxies expose OpenAI-compatible chat and model endpoints:
@@ -389,9 +504,11 @@ POST /ask
 Example:
 
 ```bash
-curl http://localhost:9001/v1/models
-curl http://localhost:9002/v1/models
+curl -H "Authorization: Bearer $AI_STACK_API_KEY" http://localhost:9001/v1/models
+curl -H "Authorization: Bearer $AI_STACK_API_KEY" http://localhost:9002/v1/models
 ```
+
+When `AI_STACK_API_KEY` is empty in development mode, omit the header.
 
 ## Dashboard Website
 
@@ -532,14 +649,14 @@ models:
     provider: openai
     model: memory-proxy
     apiBase: http://localhost:9002/v1
-    apiKey: dummy
+    apiKey: replace-with-AI_STACK_API_KEY
     roles: [chat]
 
   - name: Code Proxy
     provider: openai
     model: code-proxy
     apiBase: http://localhost:9001/v1
-    apiKey: dummy
+    apiKey: replace-with-AI_STACK_API_KEY
     roles: [chat]
 
   - name: Local Embeddings

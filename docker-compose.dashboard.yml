@@ -16,7 +16,7 @@ services:
       WATCH_CODE_SCRIPT: /app/watcher/watch_code.py
       DASHBOARD_LOG_DIR: /tmp/ai-stack-dashboard
     ports:
-      - "9100:9100"
+      - "${BIND_HOST:-127.0.0.1}:9100:9100"
     volumes:
       - ${AI_STACK_HOME}/memory/engineering-memory:/memory/engineering-memory
       - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory

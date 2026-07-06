@@ -15,6 +15,7 @@ ENV OMP_NUM_THREADS=4 \
 
 # Copy code-proxy source files only
 COPY --chown=appuser:appuser scripts/code-proxy/code_proxy.py ./code_proxy.py
+COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
 
 # Switch to the non-root execution user
 USER appuser
