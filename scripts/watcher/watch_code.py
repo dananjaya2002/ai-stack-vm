@@ -1,8 +1,10 @@
 import os
 import sys
 import time
+import json
 import subprocess
 from pathlib import Path
+from typing import Any, Dict
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -26,44 +28,48 @@ QDRANT_COLLECTION = os.getenv(
 )
 
 DEBOUNCE_SECONDS = int(os.getenv("CODE_WATCH_DEBOUNCE_SECONDS", "5"))
+CODE_WATCH_CONFIG_FILE = Path(
+    os.getenv(
+        "CODE_WATCH_CONFIG_FILE",
+        str(Path(__file__).resolve().with_name("code_watch_config.json")),
+    )
+)
+
+
+def load_json_config(path: Path) -> Dict[str, Any]:
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Unable to load code watch config: {path}") from exc
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Code watch config must be a JSON object: {path}")
+    return config
+
+
+def config_string_set(config: Dict[str, Any], key: str, *, lowercase: bool = False) -> set[str]:
+    value = config.get(key)
+    if not isinstance(value, list):
+        raise RuntimeError(f"Code watch config key must be a list: {key}")
+    items = {
+        str(item).strip().lower() if lowercase else str(item).strip()
+        for item in value
+        if str(item).strip()
+    }
+    if not items:
+        raise RuntimeError(f"Code watch config key must not be empty: {key}")
+    return items
+
+
+CODE_WATCH_CONFIG = load_json_config(CODE_WATCH_CONFIG_FILE)
 
 
 # -----------------------------
 # Ignore rules
 # -----------------------------
 
-IGNORED_DIRS = {
-    ".git",
-    "node_modules",
-    "dist",
-    "build",
-    "target",
-    ".next",
-    ".nuxt",
-    "coverage",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".idea",
-    ".vscode",
-}
-
-IGNORED_SUFFIXES = {
-    ".pyc",
-    ".pyo",
-    ".log",
-    ".tmp",
-    ".swp",
-    ".part",
-    ".lock",
-    ".map",
-}
-
-IGNORED_NAMES = {
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-}
+IGNORED_DIRS = config_string_set(CODE_WATCH_CONFIG, "ignored_dirs")
+IGNORED_SUFFIXES = config_string_set(CODE_WATCH_CONFIG, "ignored_suffixes", lowercase=True)
+IGNORED_NAMES = config_string_set(CODE_WATCH_CONFIG, "ignored_names")
 
 
 pending = {}
@@ -82,7 +88,7 @@ def should_ignore(path: Path) -> bool:
     if path.name.startswith(".") and path.name not in {".gitignore"}:
         return True
 
-    if path.suffix in IGNORED_SUFFIXES:
+    if path.suffix.lower() in IGNORED_SUFFIXES:
         return True
 
     return False

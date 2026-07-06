@@ -66,6 +66,57 @@ MAX_CHUNK_CHARS = env_int("MAX_CHUNK_CHARS", "4000")
 MAX_CONTEXT_CHARS = env_int("MAX_CONTEXT_CHARS", "50000")
 LOG_FILE = Path(os.getenv("AGENTIC_RAG_LOG_FILE", "/logs/agentic-rag/agentic_rag.log"))
 ENABLE_LOGGING = env_bool("AGENTIC_RAG_LOGS", "true")
+TERMS_CONFIG_FILE = Path(
+    os.getenv(
+        "AGENTIC_RAG_TERMS_FILE",
+        str(Path(__file__).resolve().with_name("agentic_rag_terms.json")),
+    )
+)
+
+TERMS_CONFIG_KEYS = [
+    "stop_words",
+    "implementation_intent_terms",
+    "doc_intent_terms",
+    "explicit_memory_terms",
+    "heuristic_code_terms",
+    "heuristic_memory_terms",
+]
+
+
+def normalize_term_list(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {
+        str(term).strip().lower()
+        for term in value
+        if str(term).strip()
+    }
+
+
+def load_terms_config(path: Path) -> Dict[str, set[str]]:
+    try:
+        raw_config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Unable to load Agentic RAG terms config: {path}") from exc
+    if not isinstance(raw_config, dict):
+        raise RuntimeError(f"Agentic RAG terms config must be a JSON object: {path}")
+
+    terms_config: Dict[str, set[str]] = {}
+    missing_keys = [key for key in TERMS_CONFIG_KEYS if key not in raw_config]
+    if missing_keys:
+        raise RuntimeError(
+            f"Agentic RAG terms config is missing required keys: {', '.join(missing_keys)}"
+        )
+
+    for key in TERMS_CONFIG_KEYS:
+        terms = normalize_term_list(raw_config.get(key))
+        if not terms:
+            raise RuntimeError(f"Agentic RAG terms config key must not be empty: {key}")
+        terms_config[key] = terms
+    return terms_config
+
+
+TERMS_CONFIG = load_terms_config(TERMS_CONFIG_FILE)
 
 validate_proxy_environment(
     "agentic-rag",
@@ -199,30 +250,12 @@ def call_llm_json(prompt: str, fallback: Dict[str, Any], max_tokens: int = 1024)
 
 
 REPO_TOKEN_RE = re.compile(r"\b[a-zA-Z0-9][a-zA-Z0-9._-]*-[a-zA-Z0-9._-]*\b")
-LOGIN_TERMS = {
-    "login",
-    "log in",
-    "signin",
-    "sign in",
-    "auth",
-    "authentication",
-}
-AUTH_TERMS = {
-    *LOGIN_TERMS,
-    "firebase",
-    "backend",
-    "api",
-    "provider",
-    "service",
-}
-EXPLICIT_MEMORY_TERMS = {
-    "engineering memory",
-    "memory note",
-    "memory notes",
-    "persona",
-    "private notes",
-    "my notes",
-}
+STOP_WORDS = TERMS_CONFIG["stop_words"]
+IMPLEMENTATION_INTENT_TERMS = TERMS_CONFIG["implementation_intent_terms"]
+DOC_INTENT_TERMS = TERMS_CONFIG["doc_intent_terms"]
+EXPLICIT_MEMORY_TERMS = TERMS_CONFIG["explicit_memory_terms"]
+HEURISTIC_CODE_TERMS = TERMS_CONFIG["heuristic_code_terms"]
+HEURISTIC_MEMORY_TERMS = TERMS_CONFIG["heuristic_memory_terms"]
 
 
 def normalize_repo_name(value: str) -> str:
@@ -251,20 +284,121 @@ def detect_repo_name(question: str) -> Optional[str]:
     return tokens[0] if tokens else None
 
 
-def wants_login_evidence(question: str) -> bool:
+def extract_query_terms(text: str) -> set[str]:
+    terms = set()
+    for raw in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", text.lower()):
+        if raw not in STOP_WORDS:
+            terms.add(raw)
+
+    for phrase in re.findall(r"[A-Za-z]+(?:[A-Z][a-z0-9]+)+", text):
+        terms.add(phrase.lower())
+
+    return terms
+
+
+def wants_implementation_evidence(question: str) -> bool:
     q = question.lower()
-    return any(term in q for term in LOGIN_TERMS)
+    return any(term in q for term in IMPLEMENTATION_INTENT_TERMS)
 
 
-def has_login_evidence(chunks: List[Dict[str, Any]]) -> bool:
-    for chunk in chunks:
-        haystack = " ".join(
-            str(chunk.get(key) or "")
-            for key in ["file_path", "symbol_name", "symbol_type", "text"]
-        ).lower()
-        if any(term in haystack for term in LOGIN_TERMS):
-            return True
-    return False
+def wants_docs_evidence(question: str) -> bool:
+    q = question.lower()
+    return any(term in q for term in DOC_INTENT_TERMS)
+
+
+def chunk_search_text(chunk: Dict[str, Any]) -> str:
+    return " ".join(
+        str(chunk.get(key) or "")
+        for key in ["file_path", "symbol_name", "symbol_type", "category", "language", "text"]
+    ).lower()
+
+
+def chunk_term_overlap(chunk: Dict[str, Any], terms: set[str]) -> int:
+    haystack = chunk_search_text(chunk)
+    return sum(1 for term in terms if term in haystack)
+
+
+def is_implementation_chunk(chunk: Dict[str, Any]) -> bool:
+    if chunk.get("source_type") != "code":
+        return False
+    if chunk.get("category") == "docs":
+        return False
+    path = str(chunk.get("file_path") or "").lower()
+    return not any(part in path for part in ["/generated_", "generated_plugin", ".g.dart"])
+
+
+def has_required_implementation_evidence(question: str, chunks: List[Dict[str, Any]]) -> bool:
+    if not wants_implementation_evidence(question):
+        return True
+
+    terms = extract_query_terms(question)
+    return any(
+        is_implementation_chunk(chunk) and chunk_term_overlap(chunk, terms) > 0
+        for chunk in chunks
+    )
+
+
+def evidence_rank(question: str, chunk: Dict[str, Any]) -> tuple[float, float]:
+    terms = extract_query_terms(question)
+    score = float(chunk.get("score") or 0)
+    overlap = chunk_term_overlap(chunk, terms)
+    path = str(chunk.get("file_path") or "").lower()
+    category = chunk.get("category")
+
+    if wants_implementation_evidence(question):
+        if is_implementation_chunk(chunk):
+            score += 0.35
+        elif category == "docs":
+            score -= 0.12
+
+    if wants_docs_evidence(question) and category == "docs":
+        score += 0.12
+
+    for term in terms:
+        if term in path:
+            score += 0.08
+    score += min(overlap * 0.025, 0.25)
+
+    return score, float(chunk.get("raw_score") or 0)
+
+
+def select_answer_chunks(question: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(chunks, key=lambda chunk: evidence_rank(question, chunk), reverse=True)
+
+
+def build_required_snippet(question: str, chunks: List[Dict[str, Any]]) -> str:
+    if not wants_implementation_evidence(question):
+        return ""
+
+    terms = extract_query_terms(question)
+    candidates = [
+        chunk
+        for chunk in chunks
+        if is_implementation_chunk(chunk) and chunk_term_overlap(chunk, terms) > 0
+    ]
+    if not candidates:
+        return ""
+
+    chunk = max(candidates, key=lambda item: evidence_rank(question, item))
+    text = str(chunk.get("text") or "").strip()
+    if not text:
+        return ""
+
+    citation = format_citation(chunk)
+    language = str(chunk.get("language") or "text")
+    return f"""
+Required implementation evidence:
+If the answer includes a code snippet, copy it from this retrieved source. Do not
+rewrite class names, method names, routes, error handling, imports, or API calls.
+
+[IMPLEMENTATION SOURCE]
+Citation: {citation}
+
+```{language}
+{text[:2400]}
+```
+[/IMPLEMENTATION SOURCE]
+""".strip()
 
 
 def explicit_memory_requested(question: str) -> bool:
@@ -295,43 +429,8 @@ def sources_for_mode(source_mode: str) -> List[SourceName]:
 
 def heuristic_sources(question: str) -> List[SourceName]:
     q = question.lower()
-    code_terms = {
-        "code",
-        "function",
-        "class",
-        "api",
-        "endpoint",
-        "docker",
-        "compose",
-        "script",
-        "implementation",
-        "bug",
-        "file",
-        "repo",
-        "repository",
-        "flutter",
-        "firebase",
-        "backend",
-        "login",
-        "signin",
-        "auth",
-        "fastapi",
-        "react",
-    }
-    memory_terms = {
-        "memory",
-        "note",
-        "readme",
-        "docs",
-        "document",
-        "architecture",
-        "persona",
-        "engineering memory",
-        "explain",
-        "security",
-    }
-    wants_code = any(term in q for term in code_terms)
-    wants_memory = any(term in q for term in memory_terms)
+    wants_code = any(term in q for term in HEURISTIC_CODE_TERMS)
+    wants_memory = any(term in q for term in HEURISTIC_MEMORY_TERMS)
     if wants_code and not wants_memory:
         return ["code"]
     if wants_memory and not wants_code:
@@ -515,24 +614,21 @@ def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]
 
 
 def keyword_boost(chunk: Dict[str, Any], query: str) -> float:
-    q = query.lower()
-    haystack = " ".join(
-        str(chunk.get(key) or "")
-        for key in ["file_path", "symbol_name", "symbol_type", "category", "language", "text"]
-    ).lower()
+    terms = extract_query_terms(query)
+    haystack = chunk_search_text(chunk)
+    path = str(chunk.get("file_path") or "").lower()
     boost = 0.0
 
-    if wants_login_evidence(q):
-        for term in AUTH_TERMS:
-            if term in haystack:
-                boost += 0.04
-        if any(path_term in haystack for path_term in ["login", "auth", "signin", "firebase"]):
-            boost += 0.08
-
-    query_terms = {term for term in re.findall(r"[a-zA-Z0-9_]{4,}", q)}
-    for term in sorted(query_terms):
+    for term in sorted(terms):
         if term in haystack:
-            boost += 0.015
+            boost += 0.025
+        if term in path:
+            boost += 0.05
+
+    if wants_implementation_evidence(query) and is_implementation_chunk(chunk):
+        boost += 0.12
+    if wants_docs_evidence(query) and chunk.get("category") == "docs":
+        boost += 0.08
 
     return min(boost, 0.30)
 
@@ -868,16 +964,15 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
 
 
 def build_final_answer(question: str, trace: Dict[str, Any], temperature: float, max_tokens: int) -> str:
-    chunks = trace.get("chunks", [])
+    chunks = select_answer_chunks(question, trace.get("chunks", []))
+    trace["answer_chunks"] = chunks
     citations = [format_citation(chunk) for chunk in chunks]
-    login_requested = wants_login_evidence(question)
-    login_found = has_login_evidence(chunks)
     evidence_gate = ""
-    if login_requested and not login_found:
+    if not has_required_implementation_evidence(question, chunks):
         evidence_gate = (
-            "\nImportant evidence gate: The user asked for login/backend evidence, "
-            "but no retrieved source contains login/auth/backend code. State exactly: "
-            "\"I found evidence for the stack, but not the login implementation.\" "
+            "\nImportant evidence gate: The user asked for implementation/code evidence, "
+            "but no retrieved source contains matching implementation code. State that "
+            "the indexed evidence does not include the requested implementation snippet. "
             "Do not provide a generic or example code snippet.\n"
         )
     prompt = f"""
@@ -895,6 +990,7 @@ Rules:
   require direct evidence from imports, config, README, or code.
 - Cite only sources you actually used in the answer.
 {evidence_gate}
+{build_required_snippet(question, chunks)}
 
 User question:
 {question}
@@ -934,8 +1030,8 @@ Known citations:
 def answer_question(question: str, temperature: float = 0.2, max_tokens: int = 2048) -> Dict[str, Any]:
     trace = run_agentic_retrieval(question)
     answer = build_final_answer(question, trace, temperature, max_tokens)
-    if wants_login_evidence(question) and not has_login_evidence(trace.get("chunks", [])):
-        required_note = "I found evidence for the stack, but not the login implementation."
+    if not has_required_implementation_evidence(question, trace.get("chunks", [])):
+        required_note = "The indexed evidence does not include the requested implementation snippet."
         if required_note not in answer:
             answer = f"{required_note}\n\n{answer}"
     return {

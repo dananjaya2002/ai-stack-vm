@@ -5,5 +5,7 @@ WORKDIR /app
 COPY --chown=appuser:appuser scripts/watcher/watch_code.py ./watch_code.py
 COPY --chown=appuser:appuser scripts/watcher/index_code.py ./index_code.py
 COPY --chown=appuser:appuser scripts/watcher/search_code.py ./search_code.py
+COPY --chown=appuser:appuser scripts/watcher/code_index_config.json ./code_index_config.json
+COPY --chown=appuser:appuser scripts/watcher/code_watch_config.json ./code_watch_config.json
 
 CMD ["python", "/app/watch_code.py"]

@@ -1,10 +1,11 @@
 import os
 import sys
 import re
+import json
 import hashlib
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -38,100 +39,99 @@ EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 
 CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "2200"))
 CHUNK_OVERLAP_CHARS = int(os.getenv("CHUNK_OVERLAP_CHARS", "300"))
+CODE_INDEX_CONFIG_FILE = Path(
+    os.getenv(
+        "CODE_INDEX_CONFIG_FILE",
+        str(Path(__file__).resolve().with_name("code_index_config.json")),
+    )
+)
+
+
+def load_json_config(path: Path) -> Dict[str, Any]:
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Unable to load code index config: {path}") from exc
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Code index config must be a JSON object: {path}")
+    return config
+
+
+def config_string_set(config: Dict[str, Any], key: str, *, lowercase: bool = False) -> set[str]:
+    value = config.get(key)
+    if not isinstance(value, list):
+        raise RuntimeError(f"Code index config key must be a list: {key}")
+    items = {
+        str(item).strip().lower() if lowercase else str(item).strip()
+        for item in value
+        if str(item).strip()
+    }
+    if not items:
+        raise RuntimeError(f"Code index config key must not be empty: {key}")
+    return items
+
+
+def config_string_map(config: Dict[str, Any], key: str) -> Dict[str, str]:
+    value = config.get(key)
+    if not isinstance(value, dict) or not value:
+        raise RuntimeError(f"Code index config key must be a non-empty object: {key}")
+    items = {
+        str(map_key).strip().lower(): str(map_value).strip()
+        for map_key, map_value in value.items()
+        if str(map_key).strip() and str(map_value).strip()
+    }
+    if not items:
+        raise RuntimeError(f"Code index config key must not be empty: {key}")
+    return items
+
+
+def compile_regex_flags(flag_names: List[str]) -> int:
+    flags = 0
+    for flag_name in flag_names:
+        try:
+            flags |= getattr(re, flag_name)
+        except AttributeError as exc:
+            raise RuntimeError(f"Unsupported regex flag in code index config: {flag_name}") from exc
+    return flags
+
+
+def config_symbol_patterns(config: Dict[str, Any]) -> Dict[str, List[tuple[str, re.Pattern[str]]]]:
+    raw_patterns = config.get("symbol_patterns")
+    if not isinstance(raw_patterns, dict) or not raw_patterns:
+        raise RuntimeError("Code index config key must be a non-empty object: symbol_patterns")
+
+    compiled_patterns: Dict[str, List[tuple[str, re.Pattern[str]]]] = {}
+    for language, patterns in raw_patterns.items():
+        if not isinstance(patterns, list):
+            raise RuntimeError(f"Symbol patterns for {language} must be a list")
+
+        compiled_patterns[str(language)] = []
+        for entry in patterns:
+            if not isinstance(entry, dict):
+                raise RuntimeError(f"Symbol pattern entry for {language} must be an object")
+            symbol_type = str(entry.get("type") or "").strip()
+            pattern = str(entry.get("pattern") or "")
+            raw_flags = entry.get("flags", [])
+            if not isinstance(raw_flags, list):
+                raise RuntimeError(f"Symbol pattern flags for {language}.{symbol_type} must be a list")
+            if not symbol_type or not pattern:
+                raise RuntimeError(f"Symbol pattern entry for {language} requires type and pattern")
+            compiled_patterns[str(language)].append(
+                (symbol_type, re.compile(pattern, compile_regex_flags([str(flag) for flag in raw_flags])))
+            )
+    return compiled_patterns
+
+
+CODE_INDEX_CONFIG = load_json_config(CODE_INDEX_CONFIG_FILE)
 
 
 # -----------------------------
 # Ignore configuration
 # -----------------------------
 
-IGNORE_DIRS = {
-    ".git",
-    "node_modules",
-    "dist",
-    ".vite",
-    "build",
-    "target",
-    ".next",
-    ".nuxt",
-    "coverage",
-    "__pycache__",
-    ".venv",
-    "tmp",
-    "temp",
-    "cache",
-    ".cache",
-    "venv",
-    "env",
-    ".idea",
-    ".vscode",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".terraform",
-}
-
-IGNORE_SUFFIXES = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".ico",
-    ".svg",
-    ".zip",
-    ".tar",
-    ".gz",
-    ".7z",
-    ".rar",
-    ".pdf",
-    ".docx",
-    ".xlsx",
-    ".pptx",
-    ".lock",
-    ".log",
-    ".map",
-    ".gguf",
-    ".bin",
-    ".onnx",
-    ".sqlite",
-    ".db",
-    ".mp4",
-    ".mp3",
-    ".wav",
-}
-
-LANG_BY_EXT = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascriptreact",
-    ".ts": "typescript",
-    ".tsx": "typescriptreact",
-    ".java": "java",
-    ".go": "go",
-    ".rs": "rust",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cs": "csharp",
-    ".php": "php",
-    ".rb": "ruby",
-    ".sh": "shell",
-    ".bash": "shell",
-    ".zsh": "shell",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".json": "json",
-    ".md": "markdown",
-    ".html": "html",
-    ".css": "css",
-    ".scss": "scss",
-    ".sql": "sql",
-    ".xml": "xml",
-    ".toml": "toml",
-    ".ini": "ini",
-    ".env": "env",
-}
+IGNORE_DIRS = config_string_set(CODE_INDEX_CONFIG, "ignore_dirs")
+IGNORE_SUFFIXES = config_string_set(CODE_INDEX_CONFIG, "ignore_suffixes", lowercase=True)
+LANG_BY_EXT = config_string_map(CODE_INDEX_CONFIG, "language_by_extension")
 
 
 # -----------------------------
@@ -253,45 +253,7 @@ def chunk_text(text: str) -> List[str]:
 # Symbol extraction
 # -----------------------------
 
-SYMBOL_PATTERNS = {
-    "python": [
-        ("class", re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("async_function", re.compile(r"^\s*async\s+def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("function", re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("fastapi_route", re.compile(r"^\s*@app\.(get|post|put|delete|patch)\([^\n]*", re.MULTILINE)),
-    ],
-    "typescript": [
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("export_function", re.compile(r"\bexport\s+function\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("arrow_function", re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")),
-    ],
-    "typescriptreact": [
-        ("react_component", re.compile(r"\b(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)")),
-        ("react_component", re.compile(r"\bconst\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)|[A-Za-z0-9_]+)\s*=>")),
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-    ],
-    "javascript": [
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("arrow_function", re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")),
-    ],
-    "javascriptreact": [
-        ("react_component", re.compile(r"\b(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)")),
-        ("react_component", re.compile(r"\bconst\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)|[A-Za-z0-9_]+)\s*=>")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-    ],
-    "java": [
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("interface", re.compile(r"\binterface\s+([A-Za-z_][A-Za-z0-9_]*)")),
-    ],
-    "go": [
-        ("function", re.compile(r"^func\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("method", re.compile(r"^func\s+\([^)]+\)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("struct", re.compile(r"^type\s+([A-Za-z_][A-Za-z0-9_]*)\s+struct", re.MULTILINE)),
-    ],
-}
+SYMBOL_PATTERNS = config_symbol_patterns(CODE_INDEX_CONFIG)
 
 
 def extract_symbols(text: str, language: str) -> List[Dict[str, object]]:

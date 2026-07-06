@@ -11,6 +11,7 @@ ENV OMP_NUM_THREADS=4 \
     PYTHONUNBUFFERED=1
 
 COPY --chown=appuser:appuser scripts/agentic-rag/agentic_rag_api.py ./agentic_rag_api.py
+COPY --chown=appuser:appuser scripts/agentic-rag/agentic_rag_terms.json ./agentic_rag_terms.json
 COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
 
 USER appuser

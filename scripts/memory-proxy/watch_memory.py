@@ -2,8 +2,10 @@ import os
 import sys
 import time
 import threading
+import json
 import subprocess
 from pathlib import Path
+from typing import Any, Dict
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -33,26 +35,47 @@ QDRANT_COLLECTION = os.getenv(
 
 DEBOUNCE_SECONDS = int(os.getenv("MEMORY_WATCH_DEBOUNCE_SECONDS", "5"))
 MIN_FILE_SIZE = int(os.getenv("MEMORY_WATCH_MIN_FILE_SIZE", "5"))
+MEMORY_WATCH_CONFIG_FILE = Path(
+    os.getenv(
+        "MEMORY_WATCH_CONFIG_FILE",
+        str(Path(__file__).resolve().with_name("memory_watch_config.json")),
+    )
+)
+
+
+def load_json_config(path: Path) -> Dict[str, Any]:
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Unable to load memory watch config: {path}") from exc
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Memory watch config must be a JSON object: {path}")
+    return config
+
+
+def config_string_set(config: Dict[str, Any], key: str, *, lowercase: bool = False) -> set[str]:
+    value = config.get(key)
+    if not isinstance(value, list):
+        raise RuntimeError(f"Memory watch config key must be a list: {key}")
+    items = {
+        str(item).strip().lower() if lowercase else str(item).strip()
+        for item in value
+        if str(item).strip()
+    }
+    if not items:
+        raise RuntimeError(f"Memory watch config key must not be empty: {key}")
+    return items
+
+
+MEMORY_WATCH_CONFIG = load_json_config(MEMORY_WATCH_CONFIG_FILE)
 
 
 # -----------------------------
 # Ignore rules
 # -----------------------------
 
-IGNORED_DIRS = {
-    ".git",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "node_modules",
-}
-
-IGNORED_SUFFIXES = {
-    ".swp",
-    ".tmp",
-    ".part",
-    ".lock",
-}
+IGNORED_DIRS = config_string_set(MEMORY_WATCH_CONFIG, "ignored_dirs")
+IGNORED_SUFFIXES = config_string_set(MEMORY_WATCH_CONFIG, "ignored_suffixes", lowercase=True)
 
 
 def should_ignore_path(path: Path) -> bool:
@@ -62,7 +85,7 @@ def should_ignore_path(path: Path) -> bool:
     if path.name.startswith("."):
         return True
 
-    if path.suffix in IGNORED_SUFFIXES:
+    if path.suffix.lower() in IGNORED_SUFFIXES:
         return True
 
     return False
