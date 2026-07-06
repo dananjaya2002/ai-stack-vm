@@ -13,7 +13,6 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
 from sentence_transformers import SentenceTransformer
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -62,7 +61,7 @@ AGENTIC_TOP_K_PER_QUERY = env_int("AGENTIC_TOP_K_PER_QUERY", "3")
 
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 SIMPLE_TOP_K = env_int("SIMPLE_TOP_K", "6")
-SCORE_THRESHOLD = env_float("AGENTIC_SCORE_THRESHOLD", "0.35")
+SCORE_THRESHOLD = env_float("AGENTIC_SCORE_THRESHOLD", "0.20")
 MAX_CHUNK_CHARS = env_int("MAX_CHUNK_CHARS", "4000")
 MAX_CONTEXT_CHARS = env_int("MAX_CONTEXT_CHARS", "50000")
 LOG_FILE = Path(os.getenv("AGENTIC_RAG_LOG_FILE", "/logs/agentic-rag/agentic_rag.log"))
@@ -134,7 +133,6 @@ class SearchRequest(BaseModel):
     query: str
     source: Optional[Literal["code", "memory", "both"]] = "both"
     top_k: Optional[int] = None
-    repo: Optional[str] = None
 
 
 def log_event(event: str, data: Dict[str, Any]) -> None:
@@ -225,188 +223,39 @@ def call_llm_json(prompt: str, fallback: Dict[str, Any], max_tokens: int = 1024)
         return fallback
 
 
-REPO_TOKEN_RE = re.compile(r"\b[a-zA-Z0-9][a-zA-Z0-9._-]*-[a-zA-Z0-9._-]*\b")
-STOP_WORDS = TERMS_CONFIG["stop_words"]
-IMPLEMENTATION_INTENT_TERMS = TERMS_CONFIG["implementation_intent_terms"]
-DOC_INTENT_TERMS = TERMS_CONFIG["doc_intent_terms"]
-EXPLICIT_MEMORY_TERMS = TERMS_CONFIG["explicit_memory_terms"]
-HEURISTIC_CODE_TERMS = TERMS_CONFIG["heuristic_code_terms"]
-HEURISTIC_MEMORY_TERMS = TERMS_CONFIG["heuristic_memory_terms"]
-
-
-def normalize_repo_name(value: str) -> str:
-    value = value.strip().rstrip("/").split("/")[-1]
-    if value.endswith(".git"):
-        value = value[:-4]
-    return re.sub(r"[^A-Za-z0-9._-]", "", value)
-
-
-def detect_repo_name(question: str) -> Optional[str]:
-    github_match = re.search(r"github\.com/[^/\s]+/([^/\s]+)", question, re.IGNORECASE)
-    if github_match:
-        repo = normalize_repo_name(github_match.group(1))
-        if repo:
-            return repo
-
-    lower_question = question.lower()
-    tokens = [normalize_repo_name(match.group(0)) for match in REPO_TOKEN_RE.finditer(question)]
-    tokens = [token for token in tokens if token and "-" in token]
-
-    for token in tokens:
-        lowered = token.lower()
-        if lowered in lower_question and any(marker in lowered for marker in {"app", "repo", "iot", "api", "web"}):
-            return token
-
-    return tokens[0] if tokens else None
-
-
-def extract_query_terms(text: str) -> set[str]:
-    terms = set()
-    for raw in re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", text.lower()):
-        if raw not in STOP_WORDS:
-            terms.add(raw)
-
-    for phrase in re.findall(r"[A-Za-z]+(?:[A-Z][a-z0-9]+)+", text):
-        terms.add(phrase.lower())
-
-    return terms
-
-
-def wants_implementation_evidence(question: str) -> bool:
-    q = question.lower()
-    return any(term in q for term in IMPLEMENTATION_INTENT_TERMS)
-
-
-def wants_docs_evidence(question: str) -> bool:
-    q = question.lower()
-    return any(term in q for term in DOC_INTENT_TERMS)
-
-
-def chunk_search_text(chunk: Dict[str, Any]) -> str:
-    return " ".join(
-        str(chunk.get(key) or "")
-        for key in ["file_path", "symbol_name", "symbol_type", "category", "language", "text"]
-    ).lower()
-
-
-def chunk_term_overlap(chunk: Dict[str, Any], terms: set[str]) -> int:
-    haystack = chunk_search_text(chunk)
-    return sum(1 for term in terms if term in haystack)
-
-
-def is_implementation_chunk(chunk: Dict[str, Any]) -> bool:
-    if chunk.get("source_type") != "code":
-        return False
-    if chunk.get("category") == "docs":
-        return False
-    path = str(chunk.get("file_path") or "").lower()
-    return not any(part in path for part in ["/generated_", "generated_plugin", ".g.dart"])
-
-
-def has_required_implementation_evidence(question: str, chunks: List[Dict[str, Any]]) -> bool:
-    if not wants_implementation_evidence(question):
-        return True
-
-    terms = extract_query_terms(question)
-    return any(
-        is_implementation_chunk(chunk) and chunk_term_overlap(chunk, terms) > 0
-        for chunk in chunks
-    )
-
-
-def evidence_rank(question: str, chunk: Dict[str, Any]) -> tuple[float, float]:
-    terms = extract_query_terms(question)
-    score = float(chunk.get("score") or 0)
-    overlap = chunk_term_overlap(chunk, terms)
-    path = str(chunk.get("file_path") or "").lower()
-    category = chunk.get("category")
-
-    if wants_implementation_evidence(question):
-        if is_implementation_chunk(chunk):
-            score += 0.35
-        elif category == "docs":
-            score -= 0.12
-
-    if wants_docs_evidence(question) and category == "docs":
-        score += 0.12
-
-    for term in terms:
-        if term in path:
-            score += 0.08
-    score += min(overlap * 0.025, 0.25)
-
-    return score, float(chunk.get("raw_score") or 0)
-
-
-def select_answer_chunks(question: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(chunks, key=lambda chunk: evidence_rank(question, chunk), reverse=True)
-
-
-def build_required_snippet(question: str, chunks: List[Dict[str, Any]]) -> str:
-    if not wants_implementation_evidence(question):
-        return ""
-
-    terms = extract_query_terms(question)
-    candidates = [
-        chunk
-        for chunk in chunks
-        if is_implementation_chunk(chunk) and chunk_term_overlap(chunk, terms) > 0
-    ]
-    if not candidates:
-        return ""
-
-    chunk = max(candidates, key=lambda item: evidence_rank(question, item))
-    text = str(chunk.get("text") or "").strip()
-    if not text:
-        return ""
-
-    citation = format_citation(chunk)
-    language = str(chunk.get("language") or "text")
-    return f"""
-Required implementation evidence:
-If the answer includes a code snippet, copy it from this retrieved source. Do not
-rewrite class names, method names, routes, error handling, imports, or API calls.
-
-[IMPLEMENTATION SOURCE]
-Citation: {citation}
-
-```{language}
-{text[:2400]}
-```
-[/IMPLEMENTATION SOURCE]
-""".strip()
-
-
-def explicit_memory_requested(question: str) -> bool:
-    q = question.lower()
-    return any(term in q for term in EXPLICIT_MEMORY_TERMS)
-
-
-def source_mode_for_question(question: str, repo_name: Optional[str]) -> str:
-    if explicit_memory_requested(question):
-        return "mixed" if repo_name else "memory_only"
-    if repo_name:
-        return "code_only"
-    sources = heuristic_sources(question)
-    if sources == ["code"]:
-        return "code_only"
-    if sources == ["memory"]:
-        return "memory_only"
-    return "mixed"
-
-
-def sources_for_mode(source_mode: str) -> List[SourceName]:
-    if source_mode == "code_only":
-        return ["code"]
-    if source_mode == "memory_only":
-        return ["memory"]
-    return ["code", "memory"]
-
-
 def heuristic_sources(question: str) -> List[SourceName]:
     q = question.lower()
-    wants_code = any(term in q for term in HEURISTIC_CODE_TERMS)
-    wants_memory = any(term in q for term in HEURISTIC_MEMORY_TERMS)
+    code_terms = {
+        "code",
+        "function",
+        "class",
+        "api",
+        "endpoint",
+        "docker",
+        "compose",
+        "script",
+        "implementation",
+        "bug",
+        "file",
+        "repo",
+        "repository",
+        "fastapi",
+        "react",
+    }
+    memory_terms = {
+        "memory",
+        "note",
+        "readme",
+        "docs",
+        "document",
+        "architecture",
+        "persona",
+        "project",
+        "explain",
+        "security",
+    }
+    wants_code = any(term in q for term in code_terms)
+    wants_memory = any(term in q for term in memory_terms)
     if wants_code and not wants_memory:
         return ["code"]
     if wants_memory and not wants_code:
@@ -417,9 +266,7 @@ def heuristic_sources(question: str) -> List[SourceName]:
 def fallback_analysis(question: str) -> Dict[str, Any]:
     words = question.split()
     is_complex = len(words) > 18 or any(token in question.lower() for token in ["compare", "how", "why", "and", "across"])
-    repo_name = detect_repo_name(question)
-    source_mode = source_mode_for_question(question, repo_name)
-    sources = sources_for_mode(source_mode)
+    sources = heuristic_sources(question)
     return {
         "question_type": "multi_hop" if is_complex else "simple",
         "complexity": "high" if is_complex else "low",
@@ -427,8 +274,6 @@ def fallback_analysis(question: str) -> Dict[str, Any]:
         "main_topics": words[:8],
         "expected_evidence": ["implementation details", "documentation notes"],
         "sources": sources,
-        "source_mode": source_mode,
-        "detected_repo": repo_name,
     }
 
 
@@ -449,23 +294,19 @@ Return:
   "needs_multiple_sources": true,
   "main_topics": ["..."],
   "expected_evidence": ["..."],
-  "sources": ["code", "memory"],
-  "source_mode": "code_only | memory_only | mixed",
-  "detected_repo": "repo-name-or-null"
+  "sources": ["code", "memory"]
 }}
 """
     data = call_llm_json(prompt, fallback)
-    data["detected_repo"] = fallback["detected_repo"]
-    data["source_mode"] = fallback["source_mode"]
     sources = data.get("sources")
     if not isinstance(sources, list) or not sources:
         data["sources"] = fallback["sources"]
-    data["sources"] = sources_for_mode(data["source_mode"])
+    data["sources"] = [source for source in data["sources"] if source in {"code", "memory"}] or fallback["sources"]
     return data
 
 
 def fallback_plan(question: str, analysis: Dict[str, Any]) -> List[Dict[str, str]]:
-    sources = analysis.get("sources") or sources_for_mode(analysis.get("source_mode", "mixed"))
+    sources = analysis.get("sources") or heuristic_sources(question)
     count = 1 if analysis.get("complexity") == "low" else AGENTIC_INITIAL_SUBQUERIES
     topics = analysis.get("main_topics") if isinstance(analysis.get("main_topics"), list) else []
     topic_text = " ".join(str(topic) for topic in topics[:5]).strip()
@@ -520,12 +361,11 @@ Use at most {AGENTIC_INITIAL_SUBQUERIES} planned queries.
     data = call_llm_json(prompt, fallback)
     raw_plan = data.get("plan") if isinstance(data.get("plan"), list) else fallback["plan"]
     plan = []
-    allowed_sources = set(analysis.get("sources") or ["code", "memory"])
     for item in raw_plan[:AGENTIC_INITIAL_SUBQUERIES]:
         if not isinstance(item, dict):
             continue
         source = item.get("source")
-        if source not in allowed_sources:
+        if source not in {"code", "memory"}:
             source = (analysis.get("sources") or ["code", "memory"])[0]
         query = str(item.get("query") or question).strip()
         plan.append(
@@ -540,19 +380,6 @@ Use at most {AGENTIC_INITIAL_SUBQUERIES} planned queries.
 
 def collection_for_source(source: SourceName) -> str:
     return CODE_COLLECTION if source == "code" else MEMORY_COLLECTION
-
-
-def build_source_filter(source: SourceName, repo_name: Optional[str]) -> Optional[Filter]:
-    if source != "code" or not repo_name:
-        return None
-    return Filter(
-        must=[
-            FieldCondition(
-                key="repo",
-                match=MatchValue(value=repo_name),
-            )
-        ]
-    )
 
 
 def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]:
@@ -579,7 +406,6 @@ def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]
         "line_end": payload.get("line_end"),
         "content_hash": content_hash,
         "score": float(point.score or 0),
-        "raw_score": float(point.score or 0),
         "query": query,
         "language": payload.get("language"),
         "category": payload.get("category"),
@@ -589,100 +415,25 @@ def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]
     }
 
 
-def keyword_boost(chunk: Dict[str, Any], query: str) -> float:
-    terms = extract_query_terms(query)
-    haystack = chunk_search_text(chunk)
-    path = str(chunk.get("file_path") or "").lower()
-    boost = 0.0
-
-    for term in sorted(terms):
-        if term in haystack:
-            boost += 0.025
-        if term in path:
-            boost += 0.05
-
-    if wants_implementation_evidence(query) and is_implementation_chunk(chunk):
-        boost += 0.12
-    if wants_docs_evidence(query) and chunk.get("category") == "docs":
-        boost += 0.08
-
-    return min(boost, 0.30)
-
-
-def reject_chunk(rejected: Optional[List[Dict[str, Any]]], chunk: Dict[str, Any], reason: str) -> None:
-    if rejected is None:
-        return
-    rejected.append(
-        {
-            "reason": reason,
-            "source_type": chunk.get("source_type"),
-            "repo_name": chunk.get("repo_name"),
-            "file_path": chunk.get("file_path"),
-            "chunk_index": chunk.get("chunk_index"),
-            "score": chunk.get("score"),
-            "raw_score": chunk.get("raw_score"),
-            "query": chunk.get("query"),
-        }
-    )
-
-
-def search_source(
-    query: str,
-    source: SourceName,
-    top_k: int,
-    repo_name: Optional[str] = None,
-    source_mode: str = "mixed",
-    rejected: Optional[List[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
-    if source == "memory" and source_mode == "code_only":
-        reject_chunk(
-            rejected,
-            {
-                "source_type": "memory",
-                "repo_name": None,
-                "file_path": MEMORY_COLLECTION,
-                "chunk_index": None,
-                "score": 0,
-                "raw_score": 0,
-                "query": query,
-            },
-            "source_mode_code_only",
-        )
-        return []
-
+def search_source(query: str, source: SourceName, top_k: int) -> List[Dict[str, Any]]:
     try:
         vector = embedder.encode(query).tolist()
-        query_filter = build_source_filter(source, repo_name)
-        query_kwargs = {
-            "collection_name": collection_for_source(source),
-            "query": vector,
-            "limit": max(top_k * 4, top_k),
-            "with_payload": True,
-            "with_vectors": False,
-        }
-        if query_filter:
-            query_kwargs["query_filter"] = query_filter
-        try:
-            results = client.query_points(**query_kwargs)
-        except TypeError:
-            query_kwargs.pop("query_filter", None)
-            results = client.query_points(**query_kwargs)
+        results = client.query_points(
+            collection_name=collection_for_source(source),
+            query=vector,
+            limit=max(top_k * 4, top_k),
+            with_payload=True,
+            with_vectors=False,
+        )
     except Exception as exc:
-        log_event("search_error", {"query": query, "source": source, "repo_name": repo_name, "error": str(exc)})
+        log_event("search_error", {"query": query, "source": source, "error": str(exc)})
         return []
 
     chunks = []
     for point in results.points:
-        chunk = point_to_chunk(point, source, query)
-        if source == "code" and repo_name and chunk.get("repo_name") != repo_name:
-            reject_chunk(rejected, chunk, "repo_mismatch")
+        if float(point.score or 0) < SCORE_THRESHOLD:
             continue
-        chunk["keyword_boost"] = keyword_boost(chunk, query)
-        chunk["score"] = float(chunk.get("raw_score") or 0) + float(chunk["keyword_boost"])
-        if float(chunk["score"] or 0) < SCORE_THRESHOLD:
-            reject_chunk(rejected, chunk, "below_score_threshold")
-            continue
-        chunks.append(chunk)
+        chunks.append(point_to_chunk(point, source, query))
         if len(chunks) >= top_k:
             break
     return chunks
@@ -791,48 +542,21 @@ Use at most {AGENTIC_FOLLOWUP_TOP_K} follow-up queries.
     return data
 
 
-def applied_filters_for(analysis: Dict[str, Any]) -> Dict[str, Any]:
-    repo_name = analysis.get("detected_repo")
-    return {
-        "source_mode": analysis.get("source_mode", "mixed"),
-        "code_repo": repo_name if repo_name else None,
-        "memory_allowed": analysis.get("source_mode") != "code_only",
-    }
-
-
 def run_simple_retrieval(question: str) -> Dict[str, Any]:
-    analysis = fallback_analysis(question)
-    repo_name = analysis.get("detected_repo")
-    source_mode = analysis.get("source_mode", "mixed")
-    rejected_chunks: List[Dict[str, Any]] = []
     plan = [
         {"sub_question": question, "query": question, "source": source}
-        for source in sources_for_mode(source_mode)
+        for source in heuristic_sources(question)
     ]
     chunks: List[Dict[str, Any]] = []
     for item in plan:
-        chunks.extend(
-            search_source(
-                item["query"],
-                item["source"],
-                SIMPLE_TOP_K,
-                repo_name=repo_name,
-                source_mode=source_mode,
-                rejected=rejected_chunks,
-            )
-        )
+        chunks.extend(search_source(item["query"], item["source"], SIMPLE_TOP_K))
     chunks = dedupe_chunks(chunks)
     evaluation = evaluate_evidence(question, chunks)
     return {
-        "analysis": analysis,
-        "detected_repo": repo_name,
-        "source_mode": source_mode,
-        "applied_filters": applied_filters_for(analysis),
+        "analysis": fallback_analysis(question),
         "plan": plan,
         "queries_used": plan,
         "chunks": chunks,
-        "rejected_chunks": rejected_chunks[:50],
-        "reranked_chunks": chunks,
         "evaluations": [evaluation],
         "confidence": evaluation["confidence"],
         "stop_reason": "simple_retrieval",
@@ -844,13 +568,10 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
         return run_simple_retrieval(question)
 
     analysis = analyze_question(question)
-    repo_name = analysis.get("detected_repo")
-    source_mode = analysis.get("source_mode", "mixed")
     plan = build_retrieval_plan(question, analysis)
     all_chunks: List[Dict[str, Any]] = []
     queries_used: List[Dict[str, str]] = []
     evaluations: List[Dict[str, Any]] = []
-    rejected_chunks: List[Dict[str, Any]] = []
     stop_reason = "max_steps"
 
     current_plan = plan
@@ -869,16 +590,7 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
             }
             queries_used.append(query_record)
             top_k = AGENTIC_TOP_K_PER_QUERY if step == 1 else AGENTIC_FOLLOWUP_TOP_K
-            step_chunks.extend(
-                search_source(
-                    query,
-                    source,
-                    top_k,
-                    repo_name=repo_name,
-                    source_mode=source_mode,
-                    rejected=rejected_chunks,
-                )
-            )
+            step_chunks.extend(search_source(query, source, top_k))
 
         before_count = len(all_chunks)
         all_chunks = dedupe_chunks(all_chunks + step_chunks)
@@ -912,7 +624,7 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
         if not followups:
             stop_reason = "no_followup_queries"
             break
-        sources = analysis.get("sources") or sources_for_mode(source_mode)
+        sources = analysis.get("sources") or ["code", "memory"]
         current_plan = [
             {
                 "sub_question": f"Follow-up evidence for: {query}",
@@ -925,14 +637,9 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
     final_evaluation = evaluations[-1] if evaluations else {"confidence": 0.0}
     return {
         "analysis": analysis,
-        "detected_repo": repo_name,
-        "source_mode": source_mode,
-        "applied_filters": applied_filters_for(analysis),
         "plan": plan,
         "queries_used": queries_used,
         "chunks": all_chunks,
-        "rejected_chunks": rejected_chunks[:50],
-        "reranked_chunks": all_chunks,
         "evaluations": evaluations,
         "confidence": final_evaluation.get("confidence", 0.0),
         "stop_reason": stop_reason,
@@ -943,30 +650,12 @@ def build_final_answer(question: str, trace: Dict[str, Any], temperature: float,
     chunks = select_answer_chunks(question, trace.get("chunks", []))
     trace["answer_chunks"] = chunks
     citations = [format_citation(chunk) for chunk in chunks]
-    evidence_gate = ""
-    if not has_required_implementation_evidence(question, chunks):
-        evidence_gate = (
-            "\nImportant evidence gate: The user asked for implementation/code evidence, "
-            "but no retrieved source contains matching implementation code. State that "
-            "the indexed evidence does not include the requested implementation snippet. "
-            "Do not provide a generic or example code snippet.\n"
-        )
     prompt = f"""
 You are an agentic RAG assistant connected to private code and memory indexes.
 
 Answer the user question using the retrieved evidence. If evidence is incomplete,
 say what is uncertain. Cite sources inline using [SOURCE N] references and include
 a short Sources section.
-
-Rules:
-- Use only the evidence below.
-- Do not invent backend systems, files, functions, or snippets.
-- If you include a code snippet, copy it only from a retrieved SOURCE.
-- For backend claims such as Firebase, Supabase, REST APIs, or custom servers,
-  require direct evidence from imports, config, README, or code.
-- Cite only sources you actually used in the answer.
-{evidence_gate}
-{build_required_snippet(question, chunks)}
 
 User question:
 {question}
@@ -1006,10 +695,6 @@ Known citations:
 def answer_question(question: str, temperature: float = 0.2, max_tokens: int = 2048) -> Dict[str, Any]:
     trace = run_agentic_retrieval(question)
     answer = build_final_answer(question, trace, temperature, max_tokens)
-    if not has_required_implementation_evidence(question, trace.get("chunks", [])):
-        required_note = "The indexed evidence does not include the requested implementation snippet."
-        if required_note not in answer:
-            answer = f"{required_note}\n\n{answer}"
     return {
         "question": question,
         "answer": answer,
@@ -1080,46 +765,17 @@ def models():
 
 @app.post("/search")
 def search(req: SearchRequest):
-    analysis = fallback_analysis(req.query)
-    repo_name = req.repo or analysis.get("detected_repo")
-    source_mode = "mixed"
     sources: List[SourceName]
     if req.source == "code":
         sources = ["code"]
-        source_mode = "code_only"
     elif req.source == "memory":
         sources = ["memory"]
-        source_mode = "memory_only"
     else:
-        source_mode = analysis.get("source_mode", "mixed")
-        sources = sources_for_mode(source_mode)
+        sources = ["code", "memory"]
     chunks: List[Dict[str, Any]] = []
-    rejected_chunks: List[Dict[str, Any]] = []
     for source in sources:
-        chunks.extend(
-            search_source(
-                req.query,
-                source,
-                req.top_k or SIMPLE_TOP_K,
-                repo_name=repo_name,
-                source_mode=source_mode,
-                rejected=rejected_chunks,
-            )
-        )
-    results = dedupe_chunks(chunks)
-    return {
-        "query": req.query,
-        "detected_repo": repo_name,
-        "source_mode": source_mode,
-        "applied_filters": {
-            "source_mode": source_mode,
-            "code_repo": repo_name if repo_name else None,
-            "memory_allowed": source_mode != "code_only",
-        },
-        "results": results,
-        "rejected_chunks": rejected_chunks[:50],
-        "reranked_chunks": results,
-    }
+        chunks.extend(search_source(req.query, source, req.top_k or SIMPLE_TOP_K))
+    return {"query": req.query, "results": dedupe_chunks(chunks)}
 
 
 @app.post("/ask")

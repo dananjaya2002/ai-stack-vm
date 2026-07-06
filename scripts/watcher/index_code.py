@@ -2,7 +2,6 @@ import os
 import sys
 import re
 import hashlib
-import time
 from pathlib import Path
 from typing import Dict, List
 
@@ -116,23 +115,6 @@ def stable_id(repo: str, relative_path: str, chunk_index: int) -> int:
 
     # Qdrant integer point IDs must fit unsigned 64-bit range.
     return int(digest[:16], 16)
-
-
-def content_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def line_range_for_chunk(text: str, chunk_text: str, search_start: int) -> tuple[int, int, int]:
-    start = text.find(chunk_text, search_start)
-    if start < 0:
-        start = text.find(chunk_text)
-    if start < 0:
-        return 1, max(1, chunk_text.count("\n") + 1), search_start
-
-    end = start + len(chunk_text)
-    line_start = text.count("\n", 0, start) + 1
-    line_end = text.count("\n", 0, end) + 1
-    return line_start, line_end, end
 
 
 def read_file(path: Path) -> str:
@@ -370,9 +352,6 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
     delete_existing_file_chunks(client, repo, relative_path)
 
     points = []
-    search_start = 0
-    indexed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    file_modified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(file_path.stat().st_mtime))
 
     for chunk_index, chunk in enumerate(chunks):
         chunk_text_value = str(chunk.get("text") or "").strip()
@@ -381,17 +360,10 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
             continue
 
         embedding = model.encode(chunk_text_value).tolist()
-        line_start, line_end, search_start = line_range_for_chunk(text, chunk_text_value, search_start)
-        chunk_content_hash = content_hash(chunk_text_value)
-        chunk_id = f"{repo}:{relative_path}:{chunk_index}:{chunk_content_hash[:12]}"
 
         payload = {
-            "chunk_id": chunk_id,
-            "source_type": "code",
             "repo": repo,
-            "repo_name": repo,
             "file": str(file_path),
-            "file_path": relative_path,
             "relative_path": relative_path,
             "language": language,
             "category": category,
@@ -399,11 +371,6 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
             "symbol_name": chunk.get("symbol_name"),
             "symbol_subchunk_index": chunk.get("symbol_subchunk_index", 0),
             "chunk_index": chunk_index,
-            "line_start": line_start,
-            "line_end": line_end,
-            "content_hash": chunk_content_hash,
-            "indexed_at": indexed_at,
-            "file_modified_at": file_modified_at,
             "text": chunk_text_value,
         }
 

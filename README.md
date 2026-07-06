@@ -679,7 +679,6 @@ AGENTIC_FOLLOWUP_TOP_K=4
 AGENTIC_MAX_TOTAL_CHUNKS=16
 AGENTIC_MIN_CONFIDENCE=0.70
 AGENTIC_TOP_K_PER_QUERY=3
-AGENTIC_SCORE_THRESHOLD=0.35
 ```
 
 Debug the retrieval trace:
@@ -697,17 +696,6 @@ What does the sample Python app do?
 Where is API authentication configured?
 How do the dashboard status endpoint, README security notes, and compose ports connect?
 Which files explain repository indexing and how is it exposed to users?
-```
-
-For repo-specific questions, `agentic-rag` detects repository names such as
-`agrow-iot-app`, filters code retrieval to that repo, and avoids unrelated
-engineering-memory chunks unless the prompt explicitly asks for memory notes.
-After updating the code indexer, re-index repos to add line-range citation
-metadata:
-
-```bash
-./ai-stack index code "$AI_STACK_HOME/memory/code-memory/agrow-iot-app"
-docker compose -f docker-compose.agentic-rag.yml up -d --build
 ```
 
 ## Dashboard Website
