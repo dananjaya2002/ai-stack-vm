@@ -648,7 +648,7 @@ Tabs:
 - Overview: llama.cpp, Qdrant, memory folder, log, CPU, RAM, and disk status.
 - Logs: memory/code proxy logs plus dashboard job and watcher output, refreshed live.
 - Files: browse engineering memory and code repository directories, delete files,
-  and delete empty directories only.
+  delete empty directories, and clean known demo content.
 - Upload: upload engineering memory files or code files/zip archives.
 - Repositories: clone public repos or private HTTPS repos with a one-time Git
   token, then browse repository directories.

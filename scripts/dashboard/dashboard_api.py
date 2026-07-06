@@ -84,6 +84,10 @@ class DeleteFileRequest(BaseModel):
     path: str
 
 
+DEMO_ENGINEERING_PATHS = ("demo",)
+DEMO_CODE_PATHS = ("sample-python-app", "sample-repository-app")
+
+
 def iso_time(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
@@ -622,6 +626,46 @@ def delete_memory_file(scope: str, relative_path: str) -> Dict[str, Any]:
     return {"ok": True, "scope": scope, "path": relative_path, "kind": deleted_kind, "size_bytes": size_bytes}
 
 
+def remove_demo_content() -> Dict[str, Any]:
+    removed = []
+    missing = []
+
+    targets = [
+        ("engineering", ENGINEERING_MEMORY_DIR, name)
+        for name in DEMO_ENGINEERING_PATHS
+    ] + [
+        ("code", CODE_MEMORY_DIR, name)
+        for name in DEMO_CODE_PATHS
+    ]
+
+    for scope, root, name in targets:
+        target = safe_join(root, name)
+        if not target.exists():
+            missing.append({"scope": scope, "path": name})
+            continue
+
+        if target.is_dir():
+            shutil.rmtree(target)
+            kind = "directory"
+        elif target.is_file():
+            target.unlink()
+            kind = "file"
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported demo path type: {name}")
+
+        removed.append({"scope": scope, "path": name, "kind": kind})
+
+    record_dashboard_event(
+        "clean demo content",
+        [
+            "Cleaned demo content from dashboard.",
+            *[f"removed {item['scope']}: {item['path']}" for item in removed],
+            *[f"missing {item['scope']}: {item['path']}" for item in missing],
+        ],
+    )
+    return {"ok": True, "removed": removed, "missing": missing}
+
+
 def watcher_public(scope: str, watcher: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not watcher:
         return {"scope": scope, "running": False}
@@ -682,6 +726,11 @@ def dashboard_files(scope: str, path: Optional[str] = None, flat: bool = False) 
 @app.delete("/api/dashboard/files")
 def dashboard_delete_file(req: DeleteFileRequest) -> Dict[str, Any]:
     return delete_memory_file(req.scope, req.path)
+
+
+@app.post("/api/dashboard/demo/clean")
+def dashboard_clean_demo() -> Dict[str, Any]:
+    return remove_demo_content()
 
 
 @app.get("/api/dashboard/logs")

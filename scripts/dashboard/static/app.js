@@ -216,6 +216,19 @@ async function deleteFile(path) {
   await refreshLogs();
 }
 
+async function cleanDemoContent() {
+  const confirmed = window.confirm("Delete demo memory and demo code repositories? This only removes known demo paths.");
+  if (!confirmed) return;
+  await api("/api/dashboard/demo/clean", {
+    method: "POST",
+    headers: headers(),
+  });
+  state.filesPath = "";
+  await refreshFiles();
+  await refreshStatus();
+  await refreshLogs();
+}
+
 async function uploadFiles(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -330,6 +343,7 @@ function bind() {
   document.querySelector("#log-source").addEventListener("change", () => runAction(refreshLogs));
   document.querySelector("#log-capture").addEventListener("change", () => runAction(setLogCapture));
   document.querySelector("#refresh-files").addEventListener("click", () => runAction(refreshFiles));
+  document.querySelector("#clean-demo").addEventListener("click", () => runAction(cleanDemoContent, "Demo content deleted."));
   document.querySelector("#files-scope").addEventListener("change", () => {
     state.filesPath = "";
     runAction(refreshFiles);
