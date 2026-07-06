@@ -449,11 +449,24 @@ Index memory:
 ./ai-stack index memory
 ```
 
-Or run the script directly:
+By default, indexing runs inside a dashboard-image indexer container so the VM host
+does not need a Python virtualenv. Qdrant must be running first:
 
 ```bash
-python3 scripts/memory-proxy/index_memory.py
-python3 scripts/memory-proxy/index_memory.py "$AI_STACK_HOME/memory/engineering-memory/persons/my-note.md"
+./ai-stack up
+```
+
+Index one memory file or folder under `$AI_STACK_HOME/memory/engineering-memory`:
+
+```bash
+./ai-stack index memory "$AI_STACK_HOME/memory/engineering-memory/persons/my-note.md"
+```
+
+Advanced host-Python mode is still available if you installed dependencies
+yourself:
+
+```bash
+AI_STACK_INDEX_MODE=host ./ai-stack index memory
 ```
 
 Search/debug memory:
@@ -489,7 +502,14 @@ Index a repo:
 Index a specific file:
 
 ```bash
-python3 scripts/watcher/index_code.py "$AI_STACK_HOME/memory/code-memory/<repo-name>/src/main.py"
+./ai-stack index code "$AI_STACK_HOME/memory/code-memory/<repo-name>/src/main.py"
+```
+
+By default, code indexing also runs inside the dashboard/indexer container. Host
+mode is only needed for advanced local script development:
+
+```bash
+AI_STACK_INDEX_MODE=host ./ai-stack index code "$AI_STACK_HOME/memory/code-memory/<repo-name>"
 ```
 
 Search/debug code:
@@ -526,7 +546,8 @@ $AI_STACK_HOME/memory/code-memory/sample-python-app/
 $AI_STACK_HOME/memory/code-memory/sample-repository-app/
 ```
 
-Then it runs the existing memory and code indexers. If those demo targets already
+Then it runs the memory and code indexers inside a dashboard-image indexer container.
+No host Python virtualenv activation is needed. If those demo targets already
 exist, the command asks whether to replace them, skip copying and re-index, or
 cancel.
 
@@ -559,6 +580,21 @@ This removes only the demo memory folder and demo code repositories committed
 under `demo/code-memory/`. It does not remove other memory/code files.
 Previously indexed Qdrant vectors may remain until you re-index or reset the
 relevant collections.
+
+If demo indexing cannot reach Qdrant, start the stack first:
+
+```bash
+./ai-stack up
+```
+
+If the indexer image is stale or missing dependencies, rebuild the dashboard
+image:
+
+```bash
+./ai-stack dashboard
+# or:
+./ai-stack build
+```
 
 ## API Endpoints
 

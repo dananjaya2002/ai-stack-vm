@@ -893,16 +893,107 @@ cmd_logs() {
   esac
 }
 
+dashboard_image_available() {
+  if have docker && docker image inspect ai-stack/dashboard >/dev/null 2>&1; then
+    return 0
+  fi
+  if have podman && podman image exists ai-stack/dashboard >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+ensure_indexer_image() {
+  write_dashboard_env
+  if dashboard_image_available; then
+    return
+  fi
+  info "building dashboard image for containerized indexing"
+  compose -f docker-compose.dashboard.yml build dashboard
+}
+
+map_memory_path_for_container() {
+  local raw_path="${1:-}"
+  local host_root="${AI_STACK_HOME}/memory/engineering-memory"
+  local relative
+
+  if [[ -z "${raw_path}" ]]; then
+    printf '/memory/engineering-memory'
+    return
+  fi
+
+  case "${raw_path}" in
+    "${host_root}") printf '/memory/engineering-memory'; return ;;
+    "${host_root}/"*) relative="${raw_path#"${host_root}/"}" ;;
+    /memory/engineering-memory|/memory/engineering-memory/*) printf '%s' "${raw_path}"; return ;;
+    *)
+      fail "index target must be under ${host_root}. Move it there or run with AI_STACK_INDEX_MODE=host."
+      ;;
+  esac
+
+  printf '/memory/engineering-memory/%s' "${relative}"
+}
+
+map_code_path_for_container() {
+  local raw_path="${1:-}"
+  local host_root="${AI_STACK_HOME}/memory/code-memory"
+  local relative
+
+  [[ -n "${raw_path}" ]] || fail "usage: ./ai-stack index code <repo-path>"
+
+  case "${raw_path}" in
+    "${host_root}") printf '/memory/code-memory'; return ;;
+    "${host_root}/"*) relative="${raw_path#"${host_root}/"}" ;;
+    /memory/code-memory|/memory/code-memory/*) printf '%s' "${raw_path}"; return ;;
+    *)
+      fail "code index target must be under ${host_root}. Move it there or run with AI_STACK_INDEX_MODE=host."
+      ;;
+  esac
+
+  printf '/memory/code-memory/%s' "${relative}"
+}
+
+run_indexer_container() {
+  ensure_indexer_image
+  compose -f docker-compose.dashboard.yml run --rm indexer "$@"
+}
+
 cmd_index() {
   local target="${1:-}"
   shift || true
+  cmd_init
+  load_env
+
+  if [[ "${AI_STACK_INDEX_MODE:-container}" == "host" ]]; then
+    case "${target}" in
+      memory)
+        python3 "${ROOT_DIR}/scripts/memory-proxy/index_memory.py" "$@"
+        ;;
+      code)
+        [[ "${1:-}" ]] || fail "usage: ./ai-stack index code <repo-path>"
+        python3 "${ROOT_DIR}/scripts/watcher/index_code.py" "$@"
+        ;;
+      *)
+        fail "usage: ./ai-stack index memory|code"
+        ;;
+    esac
+    return
+  fi
+
   case "${target}" in
     memory)
-      python3 "${ROOT_DIR}/scripts/memory-proxy/index_memory.py" "$@"
+      local memory_target
+      memory_target="$(map_memory_path_for_container "${1:-}")"
+      if [[ -n "${1:-}" ]]; then
+        run_indexer_container python /app/memory-proxy/index_memory.py "${memory_target}"
+      else
+        run_indexer_container python /app/memory-proxy/index_memory.py
+      fi
       ;;
     code)
-      [[ "${1:-}" ]] || fail "usage: ./ai-stack index code <repo-path>"
-      python3 "${ROOT_DIR}/scripts/watcher/index_code.py" "$@"
+      local code_target
+      code_target="$(map_code_path_for_container "${1:-}")"
+      run_indexer_container python /app/watcher/index_code.py "${code_target}"
       ;;
     *)
       fail "usage: ./ai-stack index memory|code"
