@@ -759,9 +759,9 @@ DASHBOARD_ADMIN_USERNAME=admin
 DASHBOARD_ADMIN_PASSWORD_HASH=
 DASHBOARD_SESSION_SECRET=
 EOF
-    info "created scripts/dashboard/dashboard.env"
+    info "created scripts/dashboard/dashboard.env internal service env"
   else
-    info "scripts/dashboard/dashboard.env already exists"
+    info "scripts/dashboard/dashboard.env internal service env already exists"
   fi
 }
 

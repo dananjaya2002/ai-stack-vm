@@ -266,8 +266,17 @@ LLAMA_MEMORY_RESERVATION=8gb
 ```
 
 Real `.env` files are ignored by Git. The templates committed to the repo are
-`.env.example`, `scripts/code-proxy/.example.code-proxy.env`, and
-`scripts/memory-proxy/.example.memory-api.env`, and `.example.dashboard.env`.
+`.env.example`, `scripts/code-proxy/.example.code-proxy.env`,
+`scripts/memory-proxy/.example.memory-api.env`, and
+`scripts/dashboard/.example.dashboard.env`.
+
+There are two kinds of env files:
+
+- Root `.env`: the real local Compose/runtime configuration, including model,
+  ports, security mode, API key, and dashboard login settings.
+- Service env files such as `scripts/dashboard/dashboard.env`: generated
+  internal service defaults used by individual containers. They are ignored by
+  Git and are not meant to replace root `.env`.
 
 ## Security
 

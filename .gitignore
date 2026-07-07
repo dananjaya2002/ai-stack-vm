@@ -30,7 +30,7 @@ open-webui/*
 *.env
 !.example.memory-api.env
 !.example.code-proxy.env
-!.example.dashboard.env
+!scripts/dashboard/.example.dashboard.env
 
 # Frontend build/dependencies
 node_modules/
