@@ -491,6 +491,9 @@ does not need a Python virtualenv. Qdrant must be running first:
 ./ai-stack up
 ```
 
+The `indexer` service in `docker-compose.dashboard.yml` is a one-shot helper.
+It should not stay running after indexing jobs finish.
+
 Index one memory file or folder under `$AI_STACK_HOME/memory/engineering-memory`:
 
 ```bash
