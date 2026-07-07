@@ -91,7 +91,7 @@ Example placeholders until measured on a specific VM:
 
 - Real screenshots and a short demo GIF/video from the OpenShift route.
 - Recursive repository deletion with stronger safeguards and typed confirmation.
-- Per-service API keys and dashboard authentication.
+- Per-service API keys for finer-grained access control.
 - Qdrant cleanup helpers for deleted demo files or removed repositories.
 - Measured benchmark automation exported into README-ready tables.
 
@@ -210,10 +210,11 @@ Useful daily commands:
 ./ai-stack build
 ./ai-stack up
 ./ai-stack dashboard
+./ai-stack agentic-rag [up|down|status|logs]
 ./ai-stack down
 ./ai-stack restart
 ./ai-stack status
-./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|all]
+./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|agentic-rag|all]
 ./ai-stack index memory
 ./ai-stack index code <repo-path>
 ./ai-stack search code "query"
@@ -247,6 +248,10 @@ AI_STACK_API_KEY=
 BIND_HOST=127.0.0.1
 OPEN_WEBUI_BIND_HOST=0.0.0.0
 DASHBOARD_BIND_HOST=0.0.0.0
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=
+DASHBOARD_SESSION_SECRET=
 ENABLE_RATE_LIMIT=true
 RATE_LIMIT_PER_MINUTE=60
 
@@ -304,6 +309,24 @@ error.
 Both proxies validate required startup configuration such as `LLM_BASE_URL`,
 Qdrant connection settings, collection names, model names, and mounted memory
 paths. Missing or invalid values are reported before the service starts.
+
+The dashboard supports cookie-based login for browser access. With
+`DASHBOARD_AUTH_MODE=auto`, development mode does not require login and
+production mode does. To enable dashboard login explicitly, set:
+
+```env
+SECURITY_MODE=production
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=sha256:<sha256-of-password>
+DASHBOARD_SESSION_SECRET=<long-random-secret>
+```
+
+Generate a SHA-256 password hash with:
+
+```bash
+python3 -c 'import hashlib,getpass; print("sha256:" + hashlib.sha256(getpass.getpass().encode()).hexdigest())'
+```
 
 Basic rate limiting is enabled by default:
 
@@ -420,7 +443,7 @@ Run the optional Agentic RAG Open WebUI connector after the main stack is up:
 
 ```bash
 ./ai-stack up
-docker compose -f docker-compose.agentic-rag.yml up -d --build
+./ai-stack agentic-rag
 curl http://localhost:9200/v1/models
 ```
 
@@ -648,12 +671,22 @@ Start the main stack first, then start the connector:
 
 ```bash
 ./ai-stack up
-docker compose -f docker-compose.agentic-rag.yml up -d --build
+./ai-stack agentic-rag
+```
+
+Useful connector commands:
+
+```bash
+./ai-stack agentic-rag up
+./ai-stack agentic-rag status
+./ai-stack agentic-rag logs
+./ai-stack agentic-rag down
 ```
 
 The compose file contains only the `agentic-rag` service and joins the existing
-Compose network. It defaults to `AI_STACK_NETWORK=ai-stack-vm_default`; set that
-environment variable if your Compose project network has a different name.
+Compose network. The helper checks for that network before startup. It defaults
+to `AI_STACK_NETWORK=ai-stack-vm_default`; set that environment variable if your
+Compose project network has a different name.
 
 Open WebUI connector URLs:
 
@@ -705,6 +738,12 @@ local UI backed by FastAPI. It shows status, logs, memory files, uploads, repo
 cloning, indexing, watcher control, and lightweight Recharts history for system
 and llama metrics. Private Git repo clone/pull actions can use a one-time token
 entered in the Repositories tab; the token is not stored.
+
+Dashboard login is controlled by `DASHBOARD_AUTH_MODE`. The default `auto`
+setting skips login in `SECURITY_MODE=development` and requires login in
+`SECURITY_MODE=production`. Set `DASHBOARD_ADMIN_PASSWORD_HASH` and
+`DASHBOARD_SESSION_SECRET` before exposing the dashboard outside local
+development.
 
 Run or rebuild it as a container:
 
@@ -915,7 +954,10 @@ some container data now lives in named volumes.
 
 ```text
 ai-stack-vm/
+|-- .github/workflows/ci.yml         syntax, Python, and dashboard frontend CI
 |-- ai-stack                         CLI helper
+|-- LICENSE                          MIT license
+|-- SECURITY.md                      security policy and reporting guidance
 |-- docker-compose.yml               main stack
 |-- docker-compose.memory-proxy.yml  memory-proxy + Qdrant convenience compose
 |-- docker-compose.code-proxy.yml    code-proxy + Qdrant convenience compose

@@ -2,6 +2,14 @@ export type Scope = "engineering" | "code";
 export type TabId = "overview" | "logs" | "files" | "upload" | "repos" | "indexing" | "watchers";
 export type LogSource = "dashboard" | "watchers" | "memory" | "code";
 
+export interface AuthStatus {
+  required: boolean;
+  configured: boolean;
+  authenticated: boolean;
+  username?: string | null;
+  mode: string;
+}
+
 export interface TokenSpeed {
   tokens_per_second: number | null;
   source: string | null;

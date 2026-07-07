@@ -18,6 +18,11 @@ services:
       WATCH_MEMORY_SCRIPT: /app/memory-proxy/watch_memory.py
       WATCH_CODE_SCRIPT: /app/watcher/watch_code.py
       DASHBOARD_LOG_DIR: /tmp/ai-stack-dashboard
+      SECURITY_MODE: ${SECURITY_MODE:-development}
+      DASHBOARD_AUTH_MODE: ${DASHBOARD_AUTH_MODE:-auto}
+      DASHBOARD_ADMIN_USERNAME: ${DASHBOARD_ADMIN_USERNAME:-admin}
+      DASHBOARD_ADMIN_PASSWORD_HASH: ${DASHBOARD_ADMIN_PASSWORD_HASH:-}
+      DASHBOARD_SESSION_SECRET: ${DASHBOARD_SESSION_SECRET:-}
     ports:
       - "${DASHBOARD_BIND_HOST:-0.0.0.0}:9100:9100"
     volumes:

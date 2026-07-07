@@ -1,4 +1,5 @@
 import type {
+  AuthStatus,
   DashboardStatus,
   FilesResponse,
   JobsResponse,
@@ -10,7 +11,7 @@ import type {
 } from "../types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await fetch(path, { credentials: "same-origin", ...init });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = data.detail || data.error || `Request failed: ${response.status}`;
@@ -20,6 +21,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const dashboardApi = {
+  authStatus: () => request<AuthStatus>("/api/dashboard/auth/status"),
+  login: (payload: { username: string; password: string }) =>
+    request<AuthStatus>("/api/dashboard/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  logout: () => request<AuthStatus>("/api/dashboard/auth/logout", { method: "POST" }),
   status: () => request<DashboardStatus>("/api/dashboard/status"),
   files: (scope: Scope, path = "") =>
     request<FilesResponse>(

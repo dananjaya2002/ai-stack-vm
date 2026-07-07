@@ -1,5 +1,8 @@
 import os
 import re
+import hmac
+import hashlib
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -15,14 +18,13 @@ from urllib.parse import urlparse
 import psutil
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 load_dotenv()
@@ -48,13 +50,19 @@ PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
 MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+SECURITY_MODE = os.getenv("SECURITY_MODE", "development").strip().lower()
+DASHBOARD_AUTH_MODE = os.getenv("DASHBOARD_AUTH_MODE", "auto").strip().lower()
+DASHBOARD_ADMIN_USERNAME = os.getenv("DASHBOARD_ADMIN_USERNAME", "admin")
+DASHBOARD_ADMIN_PASSWORD_HASH = os.getenv("DASHBOARD_ADMIN_PASSWORD_HASH", "").strip()
+DASHBOARD_SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "").strip()
+DASHBOARD_SESSION_COOKIE = os.getenv("DASHBOARD_SESSION_COOKIE", "ai_stack_dashboard_session")
+DASHBOARD_COOKIE_SECURE = os.getenv("DASHBOARD_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
+DASHBOARD_SESSION_TTL_SECONDS = int(os.getenv("DASHBOARD_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 
 app = FastAPI(title="AI Stack Dashboard")
 
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -82,6 +90,103 @@ class LogCaptureRequest(BaseModel):
 class DeleteFileRequest(BaseModel):
     scope: str
     path: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def dashboard_auth_required() -> bool:
+    if DASHBOARD_AUTH_MODE == "disabled":
+        return False
+    if DASHBOARD_AUTH_MODE == "required":
+        return True
+    if DASHBOARD_AUTH_MODE != "auto":
+        return SECURITY_MODE == "production"
+    return SECURITY_MODE == "production"
+
+
+def dashboard_auth_configured() -> bool:
+    return bool(DASHBOARD_ADMIN_PASSWORD_HASH and DASHBOARD_SESSION_SECRET)
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def password_matches(password: str) -> bool:
+    expected = DASHBOARD_ADMIN_PASSWORD_HASH.removeprefix("sha256:").lower()
+    return hmac.compare_digest(hash_password(password), expected)
+
+
+def sign_session(username: str, issued_at: int) -> str:
+    payload = f"{username}:{issued_at}"
+    signature = hmac.new(DASHBOARD_SESSION_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}:{signature}"
+
+
+def valid_session(raw_session: str) -> bool:
+    if not raw_session or not DASHBOARD_SESSION_SECRET:
+        return False
+    parts = raw_session.split(":")
+    if len(parts) != 3:
+        return False
+    username, issued_at_raw, signature = parts
+    if username != DASHBOARD_ADMIN_USERNAME:
+        return False
+    try:
+        issued_at = int(issued_at_raw)
+    except ValueError:
+        return False
+    if time.time() - issued_at > DASHBOARD_SESSION_TTL_SECONDS:
+        return False
+    expected = sign_session(username, issued_at).rsplit(":", 1)[1]
+    return hmac.compare_digest(signature, expected)
+
+
+def set_session_cookie(response: Response) -> None:
+    response.set_cookie(
+        DASHBOARD_SESSION_COOKIE,
+        sign_session(DASHBOARD_ADMIN_USERNAME, int(time.time())),
+        max_age=DASHBOARD_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=DASHBOARD_COOKIE_SECURE,
+        samesite="strict",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(DASHBOARD_SESSION_COOKIE, httponly=True, secure=DASHBOARD_COOKIE_SECURE, samesite="strict")
+
+
+def auth_status_payload(request: Request) -> Dict[str, Any]:
+    required = dashboard_auth_required()
+    configured = dashboard_auth_configured()
+    authenticated = not required or valid_session(request.cookies.get(DASHBOARD_SESSION_COOKIE, ""))
+    return {
+        "required": required,
+        "configured": configured,
+        "authenticated": authenticated,
+        "username": DASHBOARD_ADMIN_USERNAME if authenticated and required else None,
+        "mode": DASHBOARD_AUTH_MODE,
+    }
+
+
+@app.middleware("http")
+async def dashboard_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if not dashboard_auth_required():
+        return await call_next(request)
+    if path == "/" or path.startswith("/assets/") or path.startswith("/api/dashboard/auth/"):
+        return await call_next(request)
+    if not path.startswith("/api/dashboard"):
+        return await call_next(request)
+    if not dashboard_auth_configured():
+        return JSONResponse(status_code=503, content={"error": "Dashboard authentication is not configured."})
+    if not valid_session(request.cookies.get(DASHBOARD_SESSION_COOKIE, "")):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    return await call_next(request)
 
 
 def iso_time(timestamp: float) -> str:
@@ -639,12 +744,44 @@ def dashboard_index_path() -> Path:
     vite_index = FRONTEND_DIST_DIR / "index.html"
     if vite_index.exists():
         return vite_index
-    return STATIC_DIR / "index.html"
+    raise HTTPException(
+        status_code=503,
+        detail="Dashboard frontend build is missing. Run npm run build in scripts/dashboard/frontend or rebuild the dashboard image.",
+    )
 
 
 @app.get("/")
 def dashboard_home() -> FileResponse:
     return FileResponse(dashboard_index_path())
+
+
+@app.get("/api/dashboard/auth/status")
+def dashboard_auth_status(request: Request) -> Dict[str, Any]:
+    return auth_status_payload(request)
+
+
+@app.post("/api/dashboard/auth/login")
+def dashboard_login(req: LoginRequest, request: Request, response: Response) -> Dict[str, Any]:
+    if not dashboard_auth_required():
+        return auth_status_payload(request)
+    if not dashboard_auth_configured():
+        raise HTTPException(status_code=503, detail="Dashboard authentication is not configured.")
+    if req.username != DASHBOARD_ADMIN_USERNAME or not password_matches(req.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    set_session_cookie(response)
+    return {
+        "required": True,
+        "configured": True,
+        "authenticated": True,
+        "username": DASHBOARD_ADMIN_USERNAME,
+        "mode": DASHBOARD_AUTH_MODE,
+    }
+
+
+@app.post("/api/dashboard/auth/logout")
+def dashboard_logout(request: Request, response: Response) -> Dict[str, Any]:
+    clear_session_cookie(response)
+    return auth_status_payload(request) | {"authenticated": False}
 
 
 @app.get("/api/dashboard/status")

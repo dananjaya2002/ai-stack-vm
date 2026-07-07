@@ -29,10 +29,11 @@ Usage:
   ./ai-stack build
   ./ai-stack up
   ./ai-stack dashboard
+  ./ai-stack agentic-rag [up|down|status|logs]
   ./ai-stack down
   ./ai-stack restart
   ./ai-stack status
-  ./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|all]
+  ./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|agentic-rag|all]
   ./ai-stack index memory
   ./ai-stack index code <repo-path>
   ./ai-stack search code "query"
@@ -307,6 +308,10 @@ AI_STACK_API_KEY=
 BIND_HOST=127.0.0.1
 OPEN_WEBUI_BIND_HOST=0.0.0.0
 DASHBOARD_BIND_HOST=0.0.0.0
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=
+DASHBOARD_SESSION_SECRET=
 ENABLE_RATE_LIMIT=true
 RATE_LIMIT_PER_MINUTE=60
 
@@ -749,6 +754,10 @@ ENGINEERING_MEMORY_DIR=/memory/engineering-memory
 CODE_MEMORY_DIR=/memory/code-memory
 MEMORY_LOG=/logs/memory/memory_api.log
 CODE_LOG=/logs/code/code_proxy.log
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=
+DASHBOARD_SESSION_SECRET=
 EOF
     info "created scripts/dashboard/dashboard.env"
   else
@@ -851,6 +860,57 @@ cmd_dashboard() {
   info "dashboard API: http://localhost:9100/api/dashboard/status"
 }
 
+compose_network_exists() {
+  local network="${AI_STACK_NETWORK:-ai-stack-vm_default}"
+  if have docker && docker network inspect "${network}" >/dev/null 2>&1; then
+    return 0
+  fi
+  if have podman && podman network exists "${network}" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+cmd_agentic_rag_status() {
+  load_env
+  local curl_args=(--silent --fail --max-time 3)
+  if [[ -n "${AI_STACK_API_KEY}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
+  if curl "${curl_args[@]}" "http://localhost:9200/v1/models" >/dev/null; then
+    info "agentic-rag: healthy"
+  else
+    warn "agentic-rag: not responding at http://localhost:9200/v1/models"
+  fi
+}
+
+cmd_agentic_rag() {
+  local sub="${1:-up}"
+  case "${sub}" in
+    up)
+      cmd_init
+      load_env
+      if ! compose_network_exists; then
+        fail "main stack network was not found. Run ./ai-stack up before starting agentic-rag."
+      fi
+      compose -f docker-compose.agentic-rag.yml up -d --build agentic-rag
+      info "agentic-rag API: http://localhost:9200/v1"
+      ;;
+    down)
+      compose -f docker-compose.agentic-rag.yml down
+      ;;
+    status)
+      cmd_agentic_rag_status
+      ;;
+    logs)
+      compose -f docker-compose.agentic-rag.yml logs -f agentic-rag
+      ;;
+    *)
+      fail "usage: ./ai-stack agentic-rag [up|down|status|logs]"
+      ;;
+  esac
+}
+
 cmd_down() {
   compose down
 }
@@ -870,7 +930,8 @@ cmd_status() {
     "qdrant:http://localhost:6333" \
     "llama:http://localhost:8082/v1/models" \
     "code-proxy:http://localhost:9001/v1/models" \
-    "memory-proxy:http://localhost:9002/v1/models"; do
+    "memory-proxy:http://localhost:9002/v1/models" \
+    "agentic-rag:http://localhost:9200/v1/models"; do
     local name="${endpoint%%:*}"
     local url="${endpoint#*:}"
     if curl "${curl_args[@]}" "${url}" >/dev/null; then
@@ -890,6 +951,7 @@ cmd_logs() {
     memory) compose logs -f memory-proxy ;;
     webui) compose logs -f open-webui ;;
     dashboard) compose -f docker-compose.dashboard.yml logs -f dashboard ;;
+    agentic-rag) compose -f docker-compose.agentic-rag.yml logs -f agentic-rag ;;
     all) compose logs -f ;;
     *) fail "unknown log target: ${target}" ;;
   esac
@@ -1202,6 +1264,7 @@ main() {
     build) cmd_build "$@" ;;
     up) cmd_up "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
+    agentic-rag) cmd_agentic_rag "$@" ;;
     down) cmd_down "$@" ;;
     restart) cmd_restart "$@" ;;
     status) cmd_status "$@" ;;
