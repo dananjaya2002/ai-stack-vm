@@ -7,8 +7,8 @@ for operations.
 
 - [OpenAI-compatible APIs](openai-compatible.md): llama.cpp, memory-proxy,
   code-proxy, and Agentic RAG `/v1` surfaces.
-- [Dashboard API](dashboard-api.md): status, files, logs, uploads, jobs,
-  watchers, and dashboard auth.
+- [Dashboard API](dashboard-api.md): status, settings, Qdrant operations,
+  files, logs, uploads, jobs, watchers, and dashboard auth.
 - [Agentic RAG API](agentic-rag.md): search, ask, debug, and chat endpoints.
 
 ## Authentication

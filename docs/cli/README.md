@@ -34,6 +34,21 @@ Agentic RAG:
 ./ai-stack agentic-rag down
 ```
 
+Validation and demo:
+
+```bash
+./ai-stack smoke
+./ai-stack demo run
+./ai-stack benchmark
+```
+
+Vector maintenance:
+
+```bash
+./ai-stack qdrant collections
+./ai-stack qdrant reset demo
+```
+
 ## Related Docs
 
 - [Setup](../setup/README.md)

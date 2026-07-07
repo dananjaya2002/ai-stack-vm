@@ -33,12 +33,16 @@ Usage:
   ./ai-stack down
   ./ai-stack restart
   ./ai-stack status
+  ./ai-stack smoke [production]
+  ./ai-stack qdrant collections
+  ./ai-stack qdrant reset memory|code|demo
+  ./ai-stack benchmark
   ./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|agentic-rag|all]
   ./ai-stack index memory
   ./ai-stack index code <repo-path>
   ./ai-stack search code "query"
   ./ai-stack search memory "query"
-  ./ai-stack demo [clean]
+  ./ai-stack demo [clean|run|reset-vectors]
 
 First run:
   ./ai-stack install
@@ -996,6 +1000,185 @@ cmd_status() {
   done
 }
 
+auth_header_args() {
+  if [[ -n "${AI_STACK_API_KEY:-}" ]]; then
+    printf '%s\n' "-H" "Authorization: Bearer ${AI_STACK_API_KEY}"
+  fi
+}
+
+curl_check() {
+  local name="$1"
+  local url="$2"
+  shift 2
+  local code
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 "$@" "${url}" || true)"
+  if [[ "${code}" =~ ^[23] ]]; then
+    info "${name}: ok (${code})"
+    return 0
+  fi
+  warn "${name}: failed (${code:-curl-error}) at ${url}"
+  return 1
+}
+
+cmd_smoke() {
+  local mode="${1:-development}"
+  local failures=0
+  cmd_init
+  load_env
+
+  compose_available || fail "compose is not available"
+  [[ -f "${ENV_FILE}" ]] || { warn ".env is missing"; failures=$((failures + 1)); }
+  [[ -f "${AI_STACK_HOME}/models/${MODEL_FILE}" ]] || { warn "model file is missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"; failures=$((failures + 1)); }
+
+  curl_check "qdrant" "http://localhost:6333" || failures=$((failures + 1))
+  curl_check "llama" "http://localhost:8082/v1/models" || failures=$((failures + 1))
+
+  local auth_args=()
+  if [[ -n "${AI_STACK_API_KEY}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
+  curl_check "code-proxy" "http://localhost:9001/v1/models" "${auth_args[@]}" || failures=$((failures + 1))
+  curl_check "memory-proxy" "http://localhost:9002/v1/models" "${auth_args[@]}" || failures=$((failures + 1))
+  curl_check "dashboard" "http://localhost:9100/api/dashboard/auth/status" || failures=$((failures + 1))
+  curl_check "agentic-rag" "http://localhost:9200/v1/models" "${auth_args[@]}" || failures=$((failures + 1))
+
+  if [[ "${mode}" == "production" ]]; then
+    [[ -n "${AI_STACK_API_KEY}" ]] || fail "AI_STACK_API_KEY is required for production smoke checks"
+    local no_auth_code with_auth_code
+    no_auth_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 http://localhost:9001/v1/models || true)"
+    with_auth_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 -H "Authorization: Bearer ${AI_STACK_API_KEY}" http://localhost:9001/v1/models || true)"
+    if [[ "${no_auth_code}" == "401" && "${with_auth_code}" =~ ^[23] ]]; then
+      info "production bearer auth: ok"
+    else
+      warn "production bearer auth: expected 401 without token and 2xx with token, got ${no_auth_code}/${with_auth_code}"
+      failures=$((failures + 1))
+    fi
+  elif [[ "${mode}" != "development" ]]; then
+    fail "usage: ./ai-stack smoke [production]"
+  fi
+
+  if (( failures > 0 )); then
+    fail "smoke checks failed: ${failures}"
+  fi
+  info "smoke checks passed"
+}
+
+qdrant_delete_collection() {
+  local collection="$1"
+  curl --silent --show-error --fail --max-time 10 \
+    -X DELETE "http://localhost:6333/collections/${collection}" >/dev/null
+}
+
+qdrant_delete_points() {
+  local collection="$1"
+  local payload="$2"
+  curl --silent --show-error --fail --max-time 20 \
+    -H "Content-Type: application/json" \
+    -X POST "http://localhost:6333/collections/${collection}/points/delete" \
+    -d "${payload}" >/dev/null
+}
+
+confirm_reset() {
+  local target="$1"
+  local answer
+  read -r -p "Type 'reset ${target}' to continue: " answer || exit 0
+  [[ "${answer}" == "reset ${target}" ]] || fail "confirmation did not match"
+}
+
+cmd_qdrant() {
+  local sub="${1:-}"
+  local target="${2:-}"
+  load_env
+  case "${sub}" in
+    collections)
+      curl --silent --show-error --fail --max-time 10 "http://localhost:6333/collections"
+      printf '\n'
+      ;;
+    reset)
+      case "${target}" in
+        memory)
+          confirm_reset memory
+          qdrant_delete_collection "${MEMORY_COLLECTION:-engineering-memory}"
+          info "deleted Qdrant collection: ${MEMORY_COLLECTION:-engineering-memory}"
+          ;;
+        code)
+          confirm_reset code
+          qdrant_delete_collection "${CODE_COLLECTION:-code-memory}"
+          info "deleted Qdrant collection: ${CODE_COLLECTION:-code-memory}"
+          ;;
+        demo)
+          confirm_reset demo
+          qdrant_delete_points "${MEMORY_COLLECTION:-engineering-memory}" '{"filter":{"must":[{"key":"category","match":{"value":"demo"}}]}}' || warn "demo memory vector cleanup skipped or failed"
+          qdrant_delete_points "${CODE_COLLECTION:-code-memory}" '{"filter":{"should":[{"key":"repo","match":{"value":"sample-python-app"}},{"key":"repo","match":{"value":"sample-repository-app"}}]}}' || warn "demo code vector cleanup skipped or failed"
+          info "deleted demo vectors where matching payloads were found"
+          ;;
+        *)
+          fail "usage: ./ai-stack qdrant reset memory|code|demo"
+          ;;
+      esac
+      ;;
+    *)
+      fail "usage: ./ai-stack qdrant collections|reset"
+      ;;
+  esac
+}
+
+benchmark_curl() {
+  local method="$1"
+  local url="$2"
+  local data="${3:-}"
+  shift 3 || true
+  local curl_args=(--silent --output /dev/null --write-out '%{http_code} %{time_total}' --max-time 30 -X "${method}")
+  if [[ -n "${data}" ]]; then
+    curl_args+=(-H "Content-Type: application/json" -d "${data}")
+  fi
+  if [[ -n "${AI_STACK_API_KEY:-}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
+  curl "${curl_args[@]}" "${url}" || true
+}
+
+cmd_benchmark() {
+  cmd_init
+  load_env
+  mkdir -p "${ROOT_DIR}/docs/benchmarks"
+  local report="${ROOT_DIR}/docs/benchmarks/latest.md"
+  local now
+  now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local llama_models llama_chat dashboard_status memory_models code_models agentic_models
+  llama_models="$(benchmark_curl GET http://localhost:8082/v1/models)"
+  llama_chat="$(benchmark_curl POST http://localhost:8082/v1/chat/completions '{"model":"'"${MODEL_NAME}"'","messages":[{"role":"user","content":"Reply with ok"}],"max_tokens":8,"temperature":0}')"
+  dashboard_status="$(benchmark_curl GET http://localhost:9100/api/dashboard/status)"
+  memory_models="$(benchmark_curl GET http://localhost:9002/v1/models)"
+  code_models="$(benchmark_curl GET http://localhost:9001/v1/models)"
+  agentic_models="$(benchmark_curl GET http://localhost:9200/v1/models)"
+
+  cat > "${report}" <<EOF
+# Latest Benchmark
+
+Generated: ${now}
+
+| Scenario | HTTP | Seconds |
+|---|---:|---:|
+| llama.cpp /v1/models | ${llama_models% *} | ${llama_models#* } |
+| llama.cpp short chat completion | ${llama_chat% *} | ${llama_chat#* } |
+| dashboard /api/dashboard/status | ${dashboard_status% *} | ${dashboard_status#* } |
+| memory-proxy /v1/models | ${memory_models% *} | ${memory_models#* } |
+| code-proxy /v1/models | ${code_models% *} | ${code_models#* } |
+| agentic-rag /v1/models | ${agentic_models% *} | ${agentic_models#* } |
+
+## Environment
+
+- Model: ${MODEL_NAME}
+- Model file: ${MODEL_FILE}
+- Profile: ${MODEL_PROFILE}
+- Security mode: ${SECURITY_MODE}
+
+EOF
+  info "wrote ${report}"
+}
+
 cmd_logs() {
   local target="${1:-all}"
   case "${target}" in
@@ -1220,8 +1403,17 @@ cmd_demo() {
   if [[ "${sub}" == "clean" ]]; then
     cmd_demo_clean
     return
+  elif [[ "${sub}" == "reset-vectors" ]]; then
+    cmd_qdrant reset demo
+    return
+  elif [[ "${sub}" == "run" ]]; then
+    shift || true
+    cmd_up
+    cmd_dashboard
+    cmd_agentic_rag up
+    sub=""
   elif [[ -n "${sub}" ]]; then
-    fail "usage: ./ai-stack demo [clean]"
+    fail "usage: ./ai-stack demo [clean|run|reset-vectors]"
   fi
 
   cmd_init
@@ -1321,6 +1513,9 @@ main() {
     down) cmd_down "$@" ;;
     restart) cmd_restart "$@" ;;
     status) cmd_status "$@" ;;
+    smoke) cmd_smoke "$@" ;;
+    qdrant) cmd_qdrant "$@" ;;
+    benchmark) cmd_benchmark "$@" ;;
     logs) cmd_logs "$@" ;;
     index) cmd_index "$@" ;;
     search) cmd_search "$@" ;;

@@ -18,12 +18,36 @@ dashboard session cookie.
 
 ```text
 GET  /api/dashboard/status
+GET  /api/dashboard/settings
 GET  /api/dashboard/logs?source=dashboard|watchers|memory|code
 POST /api/dashboard/log-capture
 ```
 
 `/api/dashboard/status` checks llama.cpp, Qdrant, memory folders, system usage,
 logs, and watcher state.
+
+`/api/dashboard/settings` returns non-secret runtime values such as service
+URLs, auth mode, security mode, collection names, and log file paths.
+
+## Qdrant Operations
+
+```text
+GET  /api/dashboard/qdrant/collections
+POST /api/dashboard/qdrant/reset
+```
+
+Reset requests require a typed confirmation:
+
+```json
+{
+  "target": "demo",
+  "confirmation": "reset demo"
+}
+```
+
+Supported targets are `memory`, `code`, and `demo`. `memory` and `code` delete
+the configured collections. `demo` deletes vectors with known demo payload
+markers and may return non-fatal `warnings` when a demo collection is missing.
 
 ## Files And Uploads
 

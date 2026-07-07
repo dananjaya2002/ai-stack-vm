@@ -8,13 +8,16 @@ Use these pages to run, monitor, and recover the stack.
 - [Indexing](indexing.md)
 - [Backup and restore](backup-restore.md)
 - [Troubleshooting](troubleshooting.md)
+- [Benchmarks](../benchmarks/README.md)
 
 ## Daily Commands
 
 ```bash
 ./ai-stack status
+./ai-stack smoke
 ./ai-stack logs all
 ./ai-stack dashboard
+./ai-stack qdrant collections
 ```
 
 ## Related Docs

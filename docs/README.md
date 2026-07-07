@@ -32,6 +32,8 @@ into architecture, setup, APIs, operations, and production hardening.
   and troubleshooting.
 - [Security](security/README.md): dashboard login, bearer auth, network
   bindings, and HTTPS guidance.
+- [Benchmarks](benchmarks/README.md): benchmark command output and how to
+  capture reviewer-ready measurements.
 - [Ports](ports.md): service port reference.
 - [Media](media/README.md): architecture diagram and placeholder screenshots.
 

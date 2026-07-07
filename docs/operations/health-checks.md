@@ -22,6 +22,22 @@ Agentic RAG is optional; it must be started with:
 ./ai-stack agentic-rag up
 ```
 
+## Smoke Test
+
+Use the smoke command when you want a pass/fail readiness check instead of a
+human-readable status summary:
+
+```bash
+./ai-stack smoke
+```
+
+In production mode, this also validates that proxy calls fail without a bearer
+token and pass with `AI_STACK_API_KEY`:
+
+```bash
+./ai-stack smoke production
+```
+
 ## Dashboard Status
 
 ```bash
@@ -44,3 +60,4 @@ curl -H "Authorization: Bearer $AI_STACK_API_KEY" http://localhost:9200/v1/model
 - [Troubleshooting](troubleshooting.md)
 - [Curl examples](../examples/curl-examples.md)
 - [Production setup](../setup/production.md)
+- [CLI maintenance](../cli/maintenance.md)

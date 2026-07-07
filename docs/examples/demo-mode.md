@@ -9,6 +9,13 @@ Demo mode copies fictional memory and sample code repositories into
 ./ai-stack demo
 ```
 
+For the complete golden path, including stack startup, dashboard startup,
+Agentic RAG startup, data copy, indexing, and sample questions:
+
+```bash
+./ai-stack demo run
+```
+
 ## Clean
 
 ```bash
@@ -16,6 +23,15 @@ Demo mode copies fictional memory and sample code repositories into
 ```
 
 The clean command removes only demo memory and demo code repositories.
+
+## Reset Demo Vectors
+
+```bash
+./ai-stack demo reset-vectors
+```
+
+This calls the Qdrant demo reset helper and asks for typed confirmation before
+deleting matching demo vectors.
 
 ## Memory Questions
 

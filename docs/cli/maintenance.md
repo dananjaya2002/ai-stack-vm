@@ -42,8 +42,40 @@ Restart one service:
 ./ai-stack restart vm-llama
 ```
 
+## Smoke Test
+
+```bash
+./ai-stack smoke
+```
+
+For production mode with `AI_STACK_API_KEY` set:
+
+```bash
+./ai-stack smoke production
+```
+
+## Qdrant Lifecycle
+
+```bash
+./ai-stack qdrant collections
+./ai-stack qdrant reset demo
+./ai-stack qdrant reset memory
+./ai-stack qdrant reset code
+```
+
+Reset commands prompt for `reset demo`, `reset memory`, or `reset code`.
+
+## Benchmarks
+
+```bash
+./ai-stack benchmark
+```
+
+The report is written to [latest benchmark](../benchmarks/latest.md).
+
 ## Related Docs
 
 - [Backup and restore](../operations/backup-restore.md)
 - [Troubleshooting](../operations/troubleshooting.md)
 - [Configuration](../setup/configuration.md)
+- [Benchmarks](../benchmarks/README.md)

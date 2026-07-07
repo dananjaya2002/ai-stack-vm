@@ -4,7 +4,7 @@ A self-hosted AI assistant stack for local model serving, Open WebUI, and
 retrieval-augmented generation over engineering notes and code repositories.
 
 The main entry point is the `./ai-stack` helper. It creates the runtime
-directories, writes local env files, downloads/points at a GGUF model, builds the
+directories, backfills the root `.env`, downloads/points at a GGUF model, builds the
 container images, and starts the compose stack.
 
 Full operator and API documentation lives in [`docs/`](docs/README.md).
@@ -79,23 +79,31 @@ sending private code or notes to hosted services.
 
 ## Benchmarks
 
-Example placeholders until measured on a specific VM:
+Run the lightweight benchmark helper on your target VM:
+
+```bash
+./ai-stack benchmark
+```
+
+The command writes the latest measured output to
+[`docs/benchmarks/latest.md`](docs/benchmarks/latest.md). Example rows to fill
+from a real run:
 
 | Scenario | Latency | RAM | Indexing speed | Notes |
 |---|---:|---:|---:|---|
-| llama.cpp `/v1/models` health check | TBD | TBD | n/a | Replace with dashboard measured latency. |
-| Short chat completion | TBD | TBD | n/a | Record model, context, and token count. |
-| Engineering memory indexing | n/a | TBD | TBD files/min | Measure with `./ai-stack index memory`. |
-| Code repository indexing | n/a | TBD | TBD files/min | Measure with `./ai-stack index code <repo>`. |
-| Dashboard refresh | TBD | TBD | n/a | Use browser plus `/api/dashboard/status`. |
+| llama.cpp `/v1/models` health check | See latest benchmark | host-dependent | n/a | `./ai-stack benchmark` |
+| Short chat completion | See latest benchmark | host-dependent | n/a | Records model/profile |
+| Engineering memory indexing | n/a | host-dependent | Use index logs | `./ai-stack demo run` or `./ai-stack index memory` |
+| Code repository indexing | n/a | host-dependent | Use index logs | `./ai-stack demo run` or `./ai-stack index code <repo>` |
+| Dashboard refresh | See latest benchmark | host-dependent | n/a | `/api/dashboard/status` |
 
 ## Future Roadmap
 
 - Real screenshots and a short demo GIF/video from the OpenShift route.
 - Recursive repository deletion with stronger safeguards and typed confirmation.
 - Per-service API keys for finer-grained access control.
-- Qdrant cleanup helpers for deleted demo files or removed repositories.
-- Measured benchmark automation exported into README-ready tables.
+- richer dashboard reset previews before destructive Qdrant actions.
+- saved benchmark history across multiple VM profiles.
 
 ## Runtime Data Layout
 
@@ -216,12 +224,16 @@ Useful daily commands:
 ./ai-stack down
 ./ai-stack restart
 ./ai-stack status
+./ai-stack smoke [production]
+./ai-stack qdrant collections
+./ai-stack qdrant reset memory|code|demo
+./ai-stack benchmark
 ./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|agentic-rag|all]
 ./ai-stack index memory
 ./ai-stack index code <repo-path>
 ./ai-stack search code "query"
 ./ai-stack search memory "query"
-./ai-stack demo [clean]
+./ai-stack demo [clean|run|reset-vectors]
 ```
 
 ## Configuration

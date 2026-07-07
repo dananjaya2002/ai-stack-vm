@@ -91,6 +91,11 @@ class DeleteFileRequest(BaseModel):
     path: str
 
 
+class QdrantResetRequest(BaseModel):
+    target: str
+    confirmation: str
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -259,7 +264,14 @@ def check_llama() -> Dict[str, Any]:
     try:
         models = get_json(f"{LLAMA_BASE_URL}/models")
     except Exception as exc:
-        return error_payload(str(exc), base_url=LLAMA_BASE_URL, latency_ms=None, approximate_token_speed=None)
+        return error_payload(
+            f"Cannot reach llama service at {LLAMA_BASE_URL}/models. "
+            "Inside compose this should usually be http://vm-llama:8082/v1. "
+            f"Details: {exc}",
+            base_url=LLAMA_BASE_URL,
+            latency_ms=None,
+            approximate_token_speed=None,
+        )
 
     model_id = first_llama_model(models["body"]) or os.getenv("LLAMA_MODEL", "local-model")
     result: Dict[str, Any] = {
@@ -317,7 +329,102 @@ def check_qdrant() -> Dict[str, Any]:
             }
         except Exception as exc:
             errors.append(f"{url}: {exc}")
-    return error_payload("; ".join(errors), url=QDRANT_URL, latency_ms=None)
+    return error_payload(
+        "Cannot reach Qdrant. Inside compose this should usually be http://qdrant:6333. "
+        f"Checked {QDRANT_URL}. Details: {'; '.join(errors)}",
+        url=QDRANT_URL,
+        latency_ms=None,
+    )
+
+
+def non_secret_settings() -> Dict[str, Any]:
+    names = [
+        "SECURITY_MODE",
+        "DASHBOARD_AUTH_MODE",
+        "DASHBOARD_ADMIN_USERNAME",
+        "BIND_HOST",
+        "OPEN_WEBUI_BIND_HOST",
+        "DASHBOARD_BIND_HOST",
+        "LLAMA_BASE_URL",
+        "QDRANT_URL",
+        "QDRANT_HOST",
+        "QDRANT_PORT",
+        "MEMORY_COLLECTION",
+        "CODE_COLLECTION",
+        "MODEL_NAME",
+        "MODEL_FILE",
+        "MODEL_PROFILE",
+        "MEMORY_TOP_K",
+        "CODE_TOP_K",
+        "AGENTIC_MAX_STEPS",
+        "AGENTIC_MIN_CONFIDENCE",
+    ]
+    return {name: os.getenv(name, "") for name in names}
+
+
+def qdrant_request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    response = requests.request(method, f"{QDRANT_URL}{path}", json=body, timeout=max(HTTP_TIMEOUT_SECONDS, 10))
+    response.raise_for_status()
+    try:
+        parsed: Any = response.json()
+    except ValueError:
+        parsed = response.text
+    return {"ok": True, "body": parsed, "status_code": response.status_code}
+
+
+def qdrant_collections_payload() -> Dict[str, Any]:
+    data = qdrant_request("GET", "/collections")["body"]
+    collections = []
+    raw_collections = data.get("result", {}).get("collections", []) if isinstance(data, dict) else []
+    for item in raw_collections:
+        name = item.get("name")
+        if not name:
+            continue
+        detail: Dict[str, Any] = {"name": name}
+        try:
+            detail_body = qdrant_request("GET", f"/collections/{name}")["body"]
+            result = detail_body.get("result", {}) if isinstance(detail_body, dict) else {}
+            detail["points_count"] = result.get("points_count")
+            detail["vectors_count"] = result.get("vectors_count")
+            detail["status"] = result.get("status")
+        except Exception as exc:
+            detail["error"] = str(exc)
+        collections.append(detail)
+    return {"ok": True, "collections": collections}
+
+
+def delete_qdrant_collection(collection: str) -> None:
+    qdrant_request("DELETE", f"/collections/{collection}")
+
+
+def delete_demo_vectors() -> List[str]:
+    memory_collection = os.getenv("MEMORY_COLLECTION", "engineering-memory")
+    code_collection = os.getenv("CODE_COLLECTION", "code-memory")
+    warnings = []
+    try:
+        qdrant_request(
+            "POST",
+            f"/collections/{memory_collection}/points/delete",
+            {"filter": {"must": [{"key": "category", "match": {"value": "demo"}}]}},
+        )
+    except Exception as exc:
+        warnings.append(f"memory demo vector cleanup skipped: {exc}")
+    try:
+        qdrant_request(
+            "POST",
+            f"/collections/{code_collection}/points/delete",
+            {
+                "filter": {
+                    "should": [
+                        {"key": "repo", "match": {"value": "sample-python-app"}},
+                        {"key": "repo", "match": {"value": "sample-repository-app"}},
+                    ]
+                }
+            },
+        )
+    except Exception as exc:
+        warnings.append(f"code demo vector cleanup skipped: {exc}")
+    return warnings
 
 
 def memory_stats(path: Path) -> Dict[str, Any]:
@@ -803,6 +910,50 @@ def dashboard_status() -> Dict[str, Any]:
         "log_capture": LOG_CAPTURE,
         "watchers": list_watchers(),
     }
+
+
+@app.get("/api/dashboard/settings")
+def dashboard_settings() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "settings": non_secret_settings(),
+        "paths": {
+            "engineering_memory": str(ENGINEERING_MEMORY_DIR),
+            "code_memory": str(CODE_MEMORY_DIR),
+            "memory_log": str(MEMORY_LOG),
+            "code_log": str(CODE_LOG),
+            "dashboard_log_dir": str(DASHBOARD_LOG_DIR),
+        },
+    }
+
+
+@app.get("/api/dashboard/qdrant/collections")
+def dashboard_qdrant_collections() -> Dict[str, Any]:
+    try:
+        return qdrant_collections_payload()
+    except Exception as exc:
+        return error_payload(str(exc), collections=[])
+
+
+@app.post("/api/dashboard/qdrant/reset")
+def dashboard_qdrant_reset(req: QdrantResetRequest) -> Dict[str, Any]:
+    expected = f"reset {req.target}"
+    if req.confirmation != expected:
+        raise HTTPException(status_code=400, detail=f"Type '{expected}' to confirm.")
+
+    warnings: List[str] = []
+    if req.target == "memory":
+        collection = os.getenv("MEMORY_COLLECTION", "engineering-memory")
+        delete_qdrant_collection(collection)
+    elif req.target == "code":
+        collection = os.getenv("CODE_COLLECTION", "code-memory")
+        delete_qdrant_collection(collection)
+    elif req.target == "demo":
+        warnings = delete_demo_vectors()
+    else:
+        raise HTTPException(status_code=400, detail="target must be memory, code, or demo")
+
+    return {"ok": True, "target": req.target, "warnings": warnings}
 
 
 @app.get("/api/dashboard/files")

@@ -1,10 +1,12 @@
 import type {
   AuthStatus,
   DashboardStatus,
+  DashboardSettingsResponse,
   FilesResponse,
   JobsResponse,
   LogSource,
   LogsResponse,
+  QdrantCollectionsResponse,
   Scope,
   UploadResponse,
   WatchersResponse,
@@ -70,4 +72,12 @@ export const dashboardApi = {
   watchers: () => request<WatchersResponse>("/api/dashboard/watchers"),
   watcherAction: (scope: Scope, action: "start" | "stop") =>
     request<{ ok: boolean; watcher: unknown }>(`/api/dashboard/watchers/${scope}/${action}`, { method: "POST" }),
+  settings: () => request<DashboardSettingsResponse>("/api/dashboard/settings"),
+  qdrantCollections: () => request<QdrantCollectionsResponse>("/api/dashboard/qdrant/collections"),
+  qdrantReset: (target: "memory" | "code" | "demo", confirmation: string) =>
+    request<{ ok: boolean; target: string; warnings?: string[] }>("/api/dashboard/qdrant/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, confirmation }),
+    }),
 };
