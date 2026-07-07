@@ -227,8 +227,6 @@ Useful daily commands:
 `./ai-stack init` creates:
 
 - `.env`
-- `scripts/code-proxy/code-proxy.env`
-- `scripts/memory-proxy/memory-api.env`
 - `$AI_STACK_HOME/models`
 - `$AI_STACK_HOME/memory/code-memory`
 - `$AI_STACK_HOME/memory/engineering-memory`
@@ -265,18 +263,12 @@ LLAMA_CPU_RESERVATION=4
 LLAMA_MEMORY_RESERVATION=8gb
 ```
 
-Real `.env` files are ignored by Git. The templates committed to the repo are
-`.env.example`, `scripts/code-proxy/.example.code-proxy.env`,
-`scripts/memory-proxy/.example.memory-api.env`, and
-`scripts/dashboard/.example.dashboard.env`.
+Real `.env` files are ignored by Git. The committed template is `.env.example`.
 
-There are two kinds of env files:
-
-- Root `.env`: the real local Compose/runtime configuration, including model,
-  ports, security mode, API key, and dashboard login settings.
-- Service env files such as `scripts/dashboard/dashboard.env`: generated
-  internal service defaults used by individual containers. They are ignored by
-  Git and are not meant to replace root `.env`.
+The root `.env` is the single runtime configuration source for Compose and all
+services, including model settings, ports, proxy security, dashboard login,
+retrieval tuning, and Agentic RAG settings. `./ai-stack init` backfills missing
+keys without overwriting existing values.
 
 ## Security
 
@@ -713,7 +705,7 @@ first analyzes the question, creates sub-queries, searches the existing
 evidence is enough, optionally runs follow-up searches, and then answers with
 citations.
 
-Configuration lives in `scripts/agentic-rag/agentic-rag.env.example`:
+Configuration lives in root `.env`:
 
 ```env
 ENABLE_INDEX_V2=true

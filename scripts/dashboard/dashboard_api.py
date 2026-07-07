@@ -28,7 +28,6 @@ BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 load_dotenv()
-load_dotenv(BASE_DIR / "dashboard.env", override=False)
 
 LLAMA_BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8082/v1").rstrip("/")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")

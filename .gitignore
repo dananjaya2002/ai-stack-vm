@@ -28,9 +28,7 @@ open-webui/*
 
 #environment files
 *.env
-!.example.memory-api.env
-!.example.code-proxy.env
-!scripts/dashboard/.example.dashboard.env
+!.env.example
 
 # Frontend build/dependencies
 node_modules/
