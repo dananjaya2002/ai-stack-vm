@@ -8,6 +8,9 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.config_loader import default_config_path, load_json_object, require_string_set
+
 
 # -----------------------------
 # Configuration
@@ -33,26 +36,16 @@ QDRANT_COLLECTION = os.getenv(
 
 DEBOUNCE_SECONDS = int(os.getenv("MEMORY_WATCH_DEBOUNCE_SECONDS", "5"))
 MIN_FILE_SIZE = int(os.getenv("MEMORY_WATCH_MIN_FILE_SIZE", "5"))
+MEMORY_WATCH_CONFIG_FILE = default_config_path("MEMORY_WATCH_CONFIG_FILE", "memory_watch.json", __file__)
+MEMORY_WATCH_CONFIG = load_json_object(MEMORY_WATCH_CONFIG_FILE, "Memory watch")
 
 
 # -----------------------------
 # Ignore rules
 # -----------------------------
 
-IGNORED_DIRS = {
-    ".git",
-    "__pycache__",
-    ".venv",
-    "venv",
-    "node_modules",
-}
-
-IGNORED_SUFFIXES = {
-    ".swp",
-    ".tmp",
-    ".part",
-    ".lock",
-}
+IGNORED_DIRS = require_string_set(MEMORY_WATCH_CONFIG, "ignored_dirs", "Memory watch")
+IGNORED_SUFFIXES = require_string_set(MEMORY_WATCH_CONFIG, "ignored_suffixes", "Memory watch", lowercase=True)
 
 
 def should_ignore_path(path: Path) -> bool:
@@ -62,7 +55,7 @@ def should_ignore_path(path: Path) -> bool:
     if path.name.startswith("."):
         return True
 
-    if path.suffix in IGNORED_SUFFIXES:
+    if path.suffix.lower() in IGNORED_SUFFIXES:
         return True
 
     return False

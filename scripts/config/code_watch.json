@@ -1,0 +1,32 @@
+{
+  "ignored_dirs": [
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    ".nuxt",
+    "coverage",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".idea",
+    ".vscode"
+  ],
+  "ignored_suffixes": [
+    ".pyc",
+    ".pyo",
+    ".log",
+    ".tmp",
+    ".swp",
+    ".part",
+    ".lock",
+    ".map"
+  ],
+  "ignored_names": [
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml"
+  ]
+}

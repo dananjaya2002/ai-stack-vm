@@ -22,12 +22,15 @@ import {
 } from "recharts";
 import { dashboardApi } from "./lib/api";
 import type {
+  AuthStatus,
   DashboardStatus,
+  DashboardSettingsResponse,
   HistoryPoint,
   Job,
   LogSource,
   LogsResponse,
   MemoryFile,
+  QdrantCollectionsResponse,
   Scope,
   TabId,
   WatcherStatus,
@@ -41,6 +44,8 @@ const tabs: Array<{ id: TabId; label: string; title: string; subtitle: string }>
   { id: "repos", label: "Repositories", title: "Repositories", subtitle: "Clone, update, and browse code repositories." },
   { id: "indexing", label: "Indexing", title: "Indexing", subtitle: "Run full or targeted indexing jobs." },
   { id: "watchers", label: "Watchers", title: "Watchers", subtitle: "Start and stop automatic reindex watchers." },
+  { id: "qdrant", label: "Qdrant", title: "Qdrant", subtitle: "Inspect collections and reset vector data." },
+  { id: "settings", label: "Settings", title: "Settings", subtitle: "Review non-secret runtime configuration." },
 ];
 
 const logSources: Array<{ value: LogSource; label: string }> = [
@@ -117,6 +122,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function App() {
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [authError, setAuthError] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [status, setStatus] = useState<DashboardStatus | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
@@ -134,12 +141,15 @@ function App() {
   const [repoFilter, setRepoFilter] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [watchers, setWatchers] = useState<Record<Scope, WatcherStatus> | null>(null);
+  const [settings, setSettings] = useState<DashboardSettingsResponse | null>(null);
+  const [qdrant, setQdrant] = useState<QdrantCollectionsResponse | null>(null);
   const [uploadResult, setUploadResult] = useState<string>("");
   const [cloneResult, setCloneResult] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement | null>(null);
 
   const currentTab = tabs.find((tab) => tab.id === activeTab) ?? tabs[0];
+  const dashboardUnlocked = Boolean(auth && (!auth.required || auth.authenticated));
 
   function showNotice(message: string, type: "info" | "bad" = "info") {
     setNotice({ message, type });
@@ -161,6 +171,44 @@ function App() {
       return null;
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function loadDashboardData() {
+    await Promise.all([refreshStatus(), refreshLogs(), refreshFiles(), refreshRepoEntries(), refreshJobs(), refreshWatchers()]);
+  }
+
+  async function refreshAuthStatus() {
+    const data = await dashboardApi.authStatus();
+    setAuth(data);
+    return data;
+  }
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError("");
+    const data = new FormData(event.currentTarget);
+    const username = String(data.get("username") || "");
+    const password = String(data.get("password") || "");
+    const result = await run("login", () => dashboardApi.login({ username, password }));
+    if (result?.authenticated) {
+      setAuth(result);
+      await run("initial", loadDashboardData);
+    } else if (result) {
+      setAuthError("Login did not unlock the dashboard.");
+    }
+  }
+
+  async function logout() {
+    const result = await run("logout", () => dashboardApi.logout());
+    if (result) {
+      setAuth(result);
+      setStatus(null);
+      setLogs(null);
+      setFiles([]);
+      setRepoEntries([]);
+      setJobs([]);
+      setWatchers(null);
     }
   }
 
@@ -216,6 +264,18 @@ function App() {
     markUpdated();
   }
 
+  async function refreshSettings() {
+    const data = await dashboardApi.settings();
+    setSettings(data);
+    markUpdated();
+  }
+
+  async function refreshQdrant() {
+    const data = await dashboardApi.qdrantCollections();
+    setQdrant(data);
+    markUpdated();
+  }
+
   async function refreshCurrentTab(tab = activeTab) {
     if (tab === "overview") await refreshStatus();
     if (tab === "logs") await refreshLogs();
@@ -224,21 +284,27 @@ function App() {
     if (tab === "repos") await Promise.all([refreshJobs(), refreshRepoEntries()]);
     if (tab === "indexing") await refreshJobs();
     if (tab === "watchers") await refreshWatchers();
+    if (tab === "qdrant") await refreshQdrant();
+    if (tab === "settings") await refreshSettings();
   }
 
   useEffect(() => {
     void run("initial", async () => {
-      await Promise.all([refreshStatus(), refreshLogs(), refreshFiles(), refreshRepoEntries(), refreshJobs(), refreshWatchers()]);
+      const authStatus = await refreshAuthStatus();
+      if (!authStatus.required || authStatus.authenticated) {
+        await loadDashboardData();
+      }
     });
   }, []);
 
   useEffect(() => {
+    if (!dashboardUnlocked) return;
     const poller = window.setInterval(() => {
       if (document.hidden) return;
       void run("poll", () => refreshCurrentTab(), undefined);
     }, 2000);
     return () => window.clearInterval(poller);
-  }, [activeTab, logSource, fileScope]);
+  }, [activeTab, logSource, fileScope, dashboardUnlocked]);
 
   useEffect(() => {
     const output = logRef.current;
@@ -255,6 +321,33 @@ function App() {
     () => repoEntries.filter((entry) => entry.path.toLowerCase().includes(repoFilter.toLowerCase())),
     [repoEntries, repoFilter],
   );
+
+  if (!auth) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-[#eef4f8] px-4 text-ink">
+        <Panel className="w-full max-w-md">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-xl bg-ocean text-sm font-black text-white">AI</div>
+            <div>
+              <h1 className="text-lg font-black">AI Stack</h1>
+              <p className="text-sm text-muted">Loading dashboard</p>
+            </div>
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  if (auth.required && !auth.authenticated) {
+    return (
+      <LoginScreen
+        configured={auth.configured}
+        error={authError || notice?.message || ""}
+        busy={busy === "login"}
+        onSubmit={login}
+      />
+    );
+  }
 
   async function changeLogCapture(enabled: boolean) {
     setLogCapture(enabled);
@@ -335,6 +428,22 @@ function App() {
     }, `${scope} watcher ${action === "start" ? "started" : "stopped"}.`);
   }
 
+  async function resetQdrant(target: "memory" | "code" | "demo") {
+    const confirmation = window.prompt(`Type "reset ${target}" to reset ${target} vectors.`);
+    if (!confirmation) return;
+    let warnings: string[] = [];
+    const result = await run(`qdrant-${target}`, async () => {
+      const response = await dashboardApi.qdrantReset(target, confirmation);
+      warnings = response.warnings || [];
+      await refreshQdrant();
+      await refreshStatus();
+      return response;
+    });
+    if (result) {
+      showNotice(warnings.length ? `Qdrant ${target} reset complete with warnings: ${warnings.join("; ")}` : `Qdrant ${target} reset complete.`);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#eef4f8] text-ink">
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
@@ -378,6 +487,12 @@ function App() {
                 Live
               </span>
               <span className="text-sm text-muted">{lastUpdated}</span>
+              {auth.required && auth.username && <span className="text-sm font-bold text-muted">{auth.username}</span>}
+              {auth.required && (
+                <Button variant="secondary" disabled={busy === "logout"} onClick={() => void logout()}>
+                  Logout
+                </Button>
+              )}
               <Button variant="secondary" disabled={busy === "tab"} onClick={() => void run("refresh", () => refreshCurrentTab())}>
                 Refresh
               </Button>
@@ -436,8 +551,54 @@ function App() {
           )}
           {activeTab === "indexing" && <IndexingTab onSubmit={startIndex} jobs={jobs} refresh={() => run("jobs", refreshJobs)} busy={busy === "index"} />}
           {activeTab === "watchers" && <WatchersTab watchers={watchers} action={watcherAction} />}
+          {activeTab === "qdrant" && <QdrantTab qdrant={qdrant} refresh={() => run("qdrant", refreshQdrant)} reset={resetQdrant} />}
+          {activeTab === "settings" && <SettingsTab settings={settings} refresh={() => run("settings", refreshSettings)} />}
         </main>
       </div>
+    </div>
+  );
+}
+
+function LoginScreen({
+  configured,
+  error,
+  busy,
+  onSubmit,
+}: {
+  configured: boolean;
+  error: string;
+  busy: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-[#eef4f8] px-4 text-ink">
+      <Panel className="w-full max-w-md">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-xl bg-ocean text-sm font-black text-white">AI</div>
+          <div>
+            <h1 className="text-lg font-black">AI Stack</h1>
+            <p className="text-sm text-muted">Dashboard login</p>
+          </div>
+        </div>
+        {!configured ? (
+          <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm font-bold text-bad">
+            Dashboard authentication is required but not configured.
+          </div>
+        ) : (
+          <form className="grid gap-4" onSubmit={onSubmit}>
+            <Field label="Username">
+              <input name="username" type="text" autoComplete="username" required className="control" />
+            </Field>
+            <Field label="Password">
+              <input name="password" type="password" autoComplete="current-password" required className="control" />
+            </Field>
+            {error && <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm font-bold text-bad">{error}</div>}
+            <Button disabled={busy} type="submit">
+              Login
+            </Button>
+          </form>
+        )}
+      </Panel>
     </div>
   );
 }
@@ -932,6 +1093,101 @@ function WatchersTab({
           </Panel>
         );
       })}
+    </div>
+  );
+}
+
+function QdrantTab({
+  qdrant,
+  refresh,
+  reset,
+}: {
+  qdrant: QdrantCollectionsResponse | null;
+  refresh: () => void;
+  reset: (target: "memory" | "code" | "demo") => void;
+}) {
+  return (
+    <div className="grid gap-5">
+      <Panel>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <Button onClick={refresh}>Refresh collections</Button>
+          <Button variant="secondary" onClick={() => reset("demo")}>Reset demo vectors</Button>
+          <Button variant="danger" onClick={() => reset("memory")}>Reset memory collection</Button>
+          <Button variant="danger" onClick={() => reset("code")}>Reset code collection</Button>
+        </div>
+        {qdrant?.error && <div className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm font-bold text-bad">{qdrant.error}</div>}
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table className="min-w-full divide-y divide-line text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase text-muted">
+              <tr>
+                <th className="px-4 py-3">Collection</th>
+                <th className="px-4 py-3">Points</th>
+                <th className="px-4 py-3">Vectors</th>
+                <th className="px-4 py-3">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line bg-white">
+              {(qdrant?.collections || []).length === 0 ? (
+                <tr>
+                  <td className="px-4 py-8 text-center text-muted" colSpan={4}>No collections found.</td>
+                </tr>
+              ) : (
+                (qdrant?.collections || []).map((collection) => (
+                  <tr key={collection.name}>
+                    <td className="px-4 py-3 font-mono text-xs">{collection.name}</td>
+                    <td className="px-4 py-3">{collection.points_count ?? "-"}</td>
+                    <td className="px-4 py-3">{collection.vectors_count ?? "-"}</td>
+                    <td className="px-4 py-3">{collection.error || collection.status || "-"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function SettingsTab({ settings, refresh }: { settings: DashboardSettingsResponse | null; refresh: () => void }) {
+  const rows = Object.entries(settings?.settings || {}).filter(([, value]) => value !== "");
+  const paths = Object.entries(settings?.paths || {});
+  return (
+    <div className="grid gap-5 xl:grid-cols-2">
+      <Panel>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="text-base font-black">Runtime Settings</h3>
+          <Button onClick={refresh}>Refresh</Button>
+        </div>
+        <KeyValueTable rows={rows} />
+      </Panel>
+      <Panel>
+        <h3 className="mb-4 text-base font-black">Mounted Paths</h3>
+        <KeyValueTable rows={paths} />
+      </Panel>
+    </div>
+  );
+}
+
+function KeyValueTable({ rows }: { rows: Array<[string, string]> }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-line">
+      <table className="min-w-full divide-y divide-line text-sm">
+        <tbody className="divide-y divide-line bg-white">
+          {rows.length === 0 ? (
+            <tr>
+              <td className="px-4 py-8 text-center text-muted">No values loaded.</td>
+            </tr>
+          ) : (
+            rows.map(([key, value]) => (
+              <tr key={key}>
+                <td className="w-56 px-4 py-3 font-mono text-xs text-muted">{key}</td>
+                <td className="break-words px-4 py-3 font-bold">{value || "-"}</td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }

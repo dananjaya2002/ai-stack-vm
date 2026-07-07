@@ -4,8 +4,10 @@ A self-hosted AI assistant stack for local model serving, Open WebUI, and
 retrieval-augmented generation over engineering notes and code repositories.
 
 The main entry point is the `./ai-stack` helper. It creates the runtime
-directories, writes local env files, downloads/points at a GGUF model, builds the
+directories, backfills the root `.env`, downloads/points at a GGUF model, builds the
 container images, and starts the compose stack.
+
+Full operator and API documentation lives in [`docs/`](docs/README.md).
 
 ## Architecture
 
@@ -16,6 +18,7 @@ Container host / VM
 |-- memory-proxy  engineering-memory RAG proxy       -> http://localhost:9002/v1
 |-- code-proxy    code-memory RAG proxy              -> http://localhost:9001/v1
 |-- open-webui    browser chat UI                    -> http://localhost:8080
+|-- agentic-rag   Index v2 Open WebUI connector      -> http://localhost:9200/v1
 `-- dashboard     management website/API            -> http://localhost:9100
 ```
 
@@ -76,23 +79,31 @@ sending private code or notes to hosted services.
 
 ## Benchmarks
 
-Example placeholders until measured on a specific VM:
+Run the lightweight benchmark helper on your target VM:
+
+```bash
+./ai-stack benchmark
+```
+
+The command writes the latest measured output to
+[`docs/benchmarks/latest.md`](docs/benchmarks/latest.md). Example rows to fill
+from a real run:
 
 | Scenario | Latency | RAM | Indexing speed | Notes |
 |---|---:|---:|---:|---|
-| llama.cpp `/v1/models` health check | TBD | TBD | n/a | Replace with dashboard measured latency. |
-| Short chat completion | TBD | TBD | n/a | Record model, context, and token count. |
-| Engineering memory indexing | n/a | TBD | TBD files/min | Measure with `./ai-stack index memory`. |
-| Code repository indexing | n/a | TBD | TBD files/min | Measure with `./ai-stack index code <repo>`. |
-| Dashboard refresh | TBD | TBD | n/a | Use browser plus `/api/dashboard/status`. |
+| llama.cpp `/v1/models` health check | See latest benchmark | host-dependent | n/a | `./ai-stack benchmark` |
+| Short chat completion | See latest benchmark | host-dependent | n/a | Records model/profile |
+| Engineering memory indexing | n/a | host-dependent | Use index logs | `./ai-stack demo run` or `./ai-stack index memory` |
+| Code repository indexing | n/a | host-dependent | Use index logs | `./ai-stack demo run` or `./ai-stack index code <repo>` |
+| Dashboard refresh | See latest benchmark | host-dependent | n/a | `/api/dashboard/status` |
 
 ## Future Roadmap
 
 - Real screenshots and a short demo GIF/video from the OpenShift route.
 - Recursive repository deletion with stronger safeguards and typed confirmation.
-- Per-service API keys and dashboard authentication.
-- Qdrant cleanup helpers for deleted demo files or removed repositories.
-- Measured benchmark automation exported into README-ready tables.
+- Per-service API keys for finer-grained access control.
+- richer dashboard reset previews before destructive Qdrant actions.
+- saved benchmark history across multiple VM profiles.
 
 ## Runtime Data Layout
 
@@ -106,10 +117,10 @@ $AI_STACK_HOME/
     `-- code-memory/                 cloned or synced project repos for code RAG
 ```
 
-The repository also has local placeholder folders (`models/`, `qdrant/`,
-`open-webui/`, `python-envs/`) with README files, but compose uses named
-container volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and
-memory.
+The repository also has local placeholder folders (`memory/`, `models/`,
+`qdrant/`, `open-webui/`, `python-envs/`) with README files, but compose uses
+named container volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for
+models and memory.
 
 ## Ports
 
@@ -122,6 +133,7 @@ memory.
 | Qdrant gRPC | 6334 | Qdrant default gRPC port, not published by current compose |
 | code-proxy | 9001 | OpenAI-compatible code RAG proxy |
 | memory-proxy | 9002 | OpenAI-compatible memory RAG proxy |
+| agentic-rag | 9200 | OpenAI-compatible agentic retrieval connector |
 | dashboard | 9100 | Optional management website and status API |
 
 ## Prerequisites
@@ -208,15 +220,20 @@ Useful daily commands:
 ./ai-stack build
 ./ai-stack up
 ./ai-stack dashboard
+./ai-stack agentic-rag [up|down|status|logs]
 ./ai-stack down
 ./ai-stack restart
 ./ai-stack status
-./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|all]
+./ai-stack smoke [production]
+./ai-stack qdrant collections
+./ai-stack qdrant reset memory|code|demo
+./ai-stack benchmark
+./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|agentic-rag|all]
 ./ai-stack index memory
 ./ai-stack index code <repo-path>
 ./ai-stack search code "query"
 ./ai-stack search memory "query"
-./ai-stack demo [clean]
+./ai-stack demo [clean|run|reset-vectors]
 ```
 
 ## Configuration
@@ -224,8 +241,6 @@ Useful daily commands:
 `./ai-stack init` creates:
 
 - `.env`
-- `scripts/code-proxy/code-proxy.env`
-- `scripts/memory-proxy/memory-api.env`
 - `$AI_STACK_HOME/models`
 - `$AI_STACK_HOME/memory/code-memory`
 - `$AI_STACK_HOME/memory/engineering-memory`
@@ -245,6 +260,10 @@ AI_STACK_API_KEY=
 BIND_HOST=127.0.0.1
 OPEN_WEBUI_BIND_HOST=0.0.0.0
 DASHBOARD_BIND_HOST=0.0.0.0
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=
+DASHBOARD_SESSION_SECRET=
 ENABLE_RATE_LIMIT=true
 RATE_LIMIT_PER_MINUTE=60
 
@@ -258,9 +277,12 @@ LLAMA_CPU_RESERVATION=4
 LLAMA_MEMORY_RESERVATION=8gb
 ```
 
-Real `.env` files are ignored by Git. The templates committed to the repo are
-`.env.example`, `scripts/code-proxy/.example.code-proxy.env`, and
-`scripts/memory-proxy/.example.memory-api.env`, and `.example.dashboard.env`.
+Real `.env` files are ignored by Git. The committed template is `.env.example`.
+
+The root `.env` is the single runtime configuration source for Compose and all
+services, including model settings, ports, proxy security, dashboard login,
+retrieval tuning, and Agentic RAG settings. `./ai-stack init` backfills missing
+keys without overwriting existing values.
 
 ## Security
 
@@ -302,6 +324,24 @@ error.
 Both proxies validate required startup configuration such as `LLM_BASE_URL`,
 Qdrant connection settings, collection names, model names, and mounted memory
 paths. Missing or invalid values are reported before the service starts.
+
+The dashboard supports cookie-based login for browser access. With
+`DASHBOARD_AUTH_MODE=auto`, development mode does not require login and
+production mode does. To enable dashboard login explicitly, set:
+
+```env
+SECURITY_MODE=production
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=sha256:<sha256-of-password>
+DASHBOARD_SESSION_SECRET=<long-random-secret>
+```
+
+Generate a SHA-256 password hash with:
+
+```bash
+python3 -c 'import hashlib,getpass; print("sha256:" + hashlib.sha256(getpass.getpass().encode()).hexdigest())'
+```
 
 Basic rate limiting is enabled by default:
 
@@ -414,6 +454,14 @@ Run the optional dashboard website:
 curl http://localhost:9100/api/dashboard/status
 ```
 
+Run the optional Agentic RAG Open WebUI connector after the main stack is up:
+
+```bash
+./ai-stack up
+./ai-stack agentic-rag
+curl http://localhost:9200/v1/models
+```
+
 Note: the split compose files are older convenience files. The main
 `docker-compose.yml` is the source of truth used by `./ai-stack`.
 
@@ -457,6 +505,9 @@ does not need a Python virtualenv. Qdrant must be running first:
 ```bash
 ./ai-stack up
 ```
+
+The `indexer` service in `docker-compose.dashboard.yml` is a one-shot helper.
+It should not stay running after indexing jobs finish.
 
 Index one memory file or folder under `$AI_STACK_HOME/memory/engineering-memory`:
 
@@ -623,6 +674,81 @@ curl -H "Authorization: Bearer $AI_STACK_API_KEY" http://localhost:9002/v1/model
 
 When `AI_STACK_API_KEY` is empty in development mode, omit the header.
 
+## Agentic Retrieval Over Index v2
+
+The optional `agentic-rag` service is a separate OpenAI-compatible connector for
+Open WebUI. It reuses the existing main stack services instead of starting its
+own model or vector database:
+
+```text
+agentic-rag -> qdrant:6333
+agentic-rag -> vm-llama:8082/v1
+```
+
+Start the main stack first, then start the connector:
+
+```bash
+./ai-stack up
+./ai-stack agentic-rag
+```
+
+Useful connector commands:
+
+```bash
+./ai-stack agentic-rag up
+./ai-stack agentic-rag status
+./ai-stack agentic-rag logs
+./ai-stack agentic-rag down
+```
+
+The compose file contains only the `agentic-rag` service and joins the existing
+Compose network. The helper checks for that network before startup. It defaults
+to `AI_STACK_NETWORK=ai-stack-vm_default`; set that environment variable if your
+Compose project network has a different name.
+
+Open WebUI connector URLs:
+
+```text
+Inside Docker/Open WebUI: http://agentic-rag:9200/v1
+From the host browser:   http://localhost:9200/v1
+```
+
+Traditional top-k RAG retrieves one fixed batch of chunks. Agentic retrieval
+first analyzes the question, creates sub-queries, searches the existing
+`engineering-memory` and `code-memory` Qdrant collections, evaluates whether the
+evidence is enough, optionally runs follow-up searches, and then answers with
+citations.
+
+Configuration lives in root `.env`:
+
+```env
+ENABLE_INDEX_V2=true
+ENABLE_AGENTIC_RETRIEVAL=true
+AGENTIC_MAX_STEPS=4
+AGENTIC_INITIAL_SUBQUERIES=3
+AGENTIC_FOLLOWUP_TOP_K=4
+AGENTIC_MAX_TOTAL_CHUNKS=16
+AGENTIC_MIN_CONFIDENCE=0.70
+AGENTIC_TOP_K_PER_QUERY=3
+```
+
+Debug the retrieval trace:
+
+```bash
+curl -X POST http://localhost:9200/v1/rag/debug \
+  -H "Content-Type: application/json" \
+  -d '{"question":"How do the dashboard, proxy security, and compose files connect?"}'
+```
+
+Useful test questions:
+
+```text
+What does the sample Python app do?
+Where is API authentication configured?
+How do the dashboard status endpoint, README security notes, and compose ports connect?
+Which files explain repository indexing and how is it exposed to users?
+```
+
 ## Dashboard Website
 
 The optional dashboard at `http://localhost:9100` provides a React/Vite tabbed
@@ -630,6 +756,12 @@ local UI backed by FastAPI. It shows status, logs, memory files, uploads, repo
 cloning, indexing, watcher control, and lightweight Recharts history for system
 and llama metrics. Private Git repo clone/pull actions can use a one-time token
 entered in the Repositories tab; the token is not stored.
+
+Dashboard login is controlled by `DASHBOARD_AUTH_MODE`. The default `auto`
+setting skips login in `SECURITY_MODE=development` and requires login in
+`SECURITY_MODE=production`. Set `DASHBOARD_ADMIN_PASSWORD_HASH` and
+`DASHBOARD_SESSION_SECRET` before exposing the dashboard outside local
+development.
 
 Run or rebuild it as a container:
 
@@ -742,6 +874,7 @@ Add OpenAI-compatible connections for:
 http://vm-llama:8082/v1
 http://code-proxy:9001/v1
 http://memory-proxy:9002/v1
+http://agentic-rag:9200/v1
 ```
 
 If you configure clients outside Docker, such as Continue.dev on your laptop,
@@ -839,24 +972,34 @@ some container data now lives in named volumes.
 
 ```text
 ai-stack-vm/
+|-- .github/workflows/ci.yml         syntax, Python, and dashboard frontend CI
+|-- .gitattributes                   line-ending rules for scripts
 |-- ai-stack                         CLI helper
+|-- CONTRIBUTING.md                  local checks and repo hygiene
+|-- LICENSE                          MIT license
+|-- SECURITY.md                      security policy and reporting guidance
 |-- docker-compose.yml               main stack
 |-- docker-compose.memory-proxy.yml  memory-proxy + Qdrant convenience compose
 |-- docker-compose.code-proxy.yml    code-proxy + Qdrant convenience compose
 |-- docker-compose.dashboard.yml     optional dashboard API compose
+|-- docker-compose.agentic-rag.yml   agentic-rag Open WebUI connector compose
 |-- docker/
 |   |-- Dockerfile.base
 |   |-- Dockerfile.memory-proxy
 |   |-- Dockerfile.code-proxy
+|   |-- Dockerfile.agentic-rag
 |   |-- Dockerfile.dashboard
 |   |-- Dockerfile.watcher-base
 |   `-- Dockerfile.watcher
 |-- scripts/
 |   |-- memory-proxy/
 |   |-- code-proxy/
+|   |-- agentic-rag/
 |   |-- dashboard/                  FastAPI dashboard + React/Vite frontend
 |   `-- watcher/
 |-- docs/
+|-- demo/                            fictional memory and sample repos
+|-- memory/                          runtime placeholder only
 |-- models/
 |-- qdrant/
 |-- open-webui/
@@ -870,6 +1013,7 @@ ai-stack-vm/
 
 ```text
 models/*          GGUF model files
+memory/*          local memory/runtime content, except memory/README.md
 qdrant/*          local vector database storage, if used
 open-webui/*      local Open WebUI data, if used
 python-envs/*     Python virtual environments

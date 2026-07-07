@@ -16,6 +16,15 @@ from qdrant_client.models import (
 )
 from sentence_transformers import SentenceTransformer
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.config_loader import (
+    default_config_path,
+    load_json_object,
+    require_string_map,
+    require_string_set,
+    require_symbol_patterns,
+)
+
 
 # -----------------------------
 # Environment configuration
@@ -37,100 +46,17 @@ EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 
 CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "2200"))
 CHUNK_OVERLAP_CHARS = int(os.getenv("CHUNK_OVERLAP_CHARS", "300"))
+CODE_INDEX_CONFIG_FILE = default_config_path("CODE_INDEX_CONFIG_FILE", "code_index.json", __file__)
+CODE_INDEX_CONFIG = load_json_object(CODE_INDEX_CONFIG_FILE, "Code index")
 
 
 # -----------------------------
 # Ignore configuration
 # -----------------------------
 
-IGNORE_DIRS = {
-    ".git",
-    "node_modules",
-    "dist",
-    ".vite",
-    "build",
-    "target",
-    ".next",
-    ".nuxt",
-    "coverage",
-    "__pycache__",
-    ".venv",
-    "tmp",
-    "temp",
-    "cache",
-    ".cache",
-    "venv",
-    "env",
-    ".idea",
-    ".vscode",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".terraform",
-}
-
-IGNORE_SUFFIXES = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".ico",
-    ".svg",
-    ".zip",
-    ".tar",
-    ".gz",
-    ".7z",
-    ".rar",
-    ".pdf",
-    ".docx",
-    ".xlsx",
-    ".pptx",
-    ".lock",
-    ".log",
-    ".map",
-    ".gguf",
-    ".bin",
-    ".onnx",
-    ".sqlite",
-    ".db",
-    ".mp4",
-    ".mp3",
-    ".wav",
-}
-
-LANG_BY_EXT = {
-    ".py": "python",
-    ".js": "javascript",
-    ".jsx": "javascriptreact",
-    ".ts": "typescript",
-    ".tsx": "typescriptreact",
-    ".java": "java",
-    ".go": "go",
-    ".rs": "rust",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".hpp": "cpp",
-    ".cs": "csharp",
-    ".php": "php",
-    ".rb": "ruby",
-    ".sh": "shell",
-    ".bash": "shell",
-    ".zsh": "shell",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".json": "json",
-    ".md": "markdown",
-    ".html": "html",
-    ".css": "css",
-    ".scss": "scss",
-    ".sql": "sql",
-    ".xml": "xml",
-    ".toml": "toml",
-    ".ini": "ini",
-    ".env": "env",
-}
+IGNORE_DIRS = require_string_set(CODE_INDEX_CONFIG, "ignore_dirs", "Code index")
+IGNORE_SUFFIXES = require_string_set(CODE_INDEX_CONFIG, "ignore_suffixes", "Code index", lowercase=True)
+LANG_BY_EXT = require_string_map(CODE_INDEX_CONFIG, "language_by_extension", "Code index")
 
 
 # -----------------------------
@@ -235,45 +161,7 @@ def chunk_text(text: str) -> List[str]:
 # Symbol extraction
 # -----------------------------
 
-SYMBOL_PATTERNS = {
-    "python": [
-        ("class", re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("async_function", re.compile(r"^\s*async\s+def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("function", re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("fastapi_route", re.compile(r"^\s*@app\.(get|post|put|delete|patch)\([^\n]*", re.MULTILINE)),
-    ],
-    "typescript": [
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("export_function", re.compile(r"\bexport\s+function\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("arrow_function", re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")),
-    ],
-    "typescriptreact": [
-        ("react_component", re.compile(r"\b(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)")),
-        ("react_component", re.compile(r"\bconst\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)|[A-Za-z0-9_]+)\s*=>")),
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-    ],
-    "javascript": [
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("arrow_function", re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>")),
-    ],
-    "javascriptreact": [
-        ("react_component", re.compile(r"\b(?:export\s+default\s+)?function\s+([A-Z][A-Za-z0-9_]*)")),
-        ("react_component", re.compile(r"\bconst\s+([A-Z][A-Za-z0-9_]*)\s*=\s*(?:\([^)]*\)|[A-Za-z0-9_]+)\s*=>")),
-        ("function", re.compile(r"\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)")),
-    ],
-    "java": [
-        ("class", re.compile(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)")),
-        ("interface", re.compile(r"\binterface\s+([A-Za-z_][A-Za-z0-9_]*)")),
-    ],
-    "go": [
-        ("function", re.compile(r"^func\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("method", re.compile(r"^func\s+\([^)]+\)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)),
-        ("struct", re.compile(r"^type\s+([A-Za-z_][A-Za-z0-9_]*)\s+struct", re.MULTILINE)),
-    ],
-}
+SYMBOL_PATTERNS = require_symbol_patterns(CODE_INDEX_CONFIG, "symbol_patterns", "Code index")
 
 
 def extract_symbols(text: str, language: str) -> List[Dict[str, object]]:

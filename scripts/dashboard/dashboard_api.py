@@ -1,5 +1,8 @@
 import os
 import re
+import hmac
+import hashlib
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -15,18 +18,16 @@ from urllib.parse import urlparse
 import psutil
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
 
 load_dotenv()
-load_dotenv(BASE_DIR / "dashboard.env", override=False)
 
 LLAMA_BASE_URL = os.getenv("LLAMA_BASE_URL", "http://localhost:8082/v1").rstrip("/")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333").rstrip("/")
@@ -48,13 +49,19 @@ PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
 MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+SECURITY_MODE = os.getenv("SECURITY_MODE", "development").strip().lower()
+DASHBOARD_AUTH_MODE = os.getenv("DASHBOARD_AUTH_MODE", "auto").strip().lower()
+DASHBOARD_ADMIN_USERNAME = os.getenv("DASHBOARD_ADMIN_USERNAME", "admin")
+DASHBOARD_ADMIN_PASSWORD_HASH = os.getenv("DASHBOARD_ADMIN_PASSWORD_HASH", "").strip()
+DASHBOARD_SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "").strip()
+DASHBOARD_SESSION_COOKIE = os.getenv("DASHBOARD_SESSION_COOKIE", "ai_stack_dashboard_session")
+DASHBOARD_COOKIE_SECURE = os.getenv("DASHBOARD_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
+DASHBOARD_SESSION_TTL_SECONDS = int(os.getenv("DASHBOARD_SESSION_TTL_SECONDS", str(12 * 60 * 60)))
 
 app = FastAPI(title="AI Stack Dashboard")
 
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -82,6 +89,108 @@ class LogCaptureRequest(BaseModel):
 class DeleteFileRequest(BaseModel):
     scope: str
     path: str
+
+
+class QdrantResetRequest(BaseModel):
+    target: str
+    confirmation: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def dashboard_auth_required() -> bool:
+    if DASHBOARD_AUTH_MODE == "disabled":
+        return False
+    if DASHBOARD_AUTH_MODE == "required":
+        return True
+    if DASHBOARD_AUTH_MODE != "auto":
+        return SECURITY_MODE == "production"
+    return SECURITY_MODE == "production"
+
+
+def dashboard_auth_configured() -> bool:
+    return bool(DASHBOARD_ADMIN_PASSWORD_HASH and DASHBOARD_SESSION_SECRET)
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def password_matches(password: str) -> bool:
+    expected = DASHBOARD_ADMIN_PASSWORD_HASH.removeprefix("sha256:").lower()
+    return hmac.compare_digest(hash_password(password), expected)
+
+
+def sign_session(username: str, issued_at: int) -> str:
+    payload = f"{username}:{issued_at}"
+    signature = hmac.new(DASHBOARD_SESSION_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}:{signature}"
+
+
+def valid_session(raw_session: str) -> bool:
+    if not raw_session or not DASHBOARD_SESSION_SECRET:
+        return False
+    parts = raw_session.split(":")
+    if len(parts) != 3:
+        return False
+    username, issued_at_raw, signature = parts
+    if username != DASHBOARD_ADMIN_USERNAME:
+        return False
+    try:
+        issued_at = int(issued_at_raw)
+    except ValueError:
+        return False
+    if time.time() - issued_at > DASHBOARD_SESSION_TTL_SECONDS:
+        return False
+    expected = sign_session(username, issued_at).rsplit(":", 1)[1]
+    return hmac.compare_digest(signature, expected)
+
+
+def set_session_cookie(response: Response) -> None:
+    response.set_cookie(
+        DASHBOARD_SESSION_COOKIE,
+        sign_session(DASHBOARD_ADMIN_USERNAME, int(time.time())),
+        max_age=DASHBOARD_SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=DASHBOARD_COOKIE_SECURE,
+        samesite="strict",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(DASHBOARD_SESSION_COOKIE, httponly=True, secure=DASHBOARD_COOKIE_SECURE, samesite="strict")
+
+
+def auth_status_payload(request: Request) -> Dict[str, Any]:
+    required = dashboard_auth_required()
+    configured = dashboard_auth_configured()
+    authenticated = not required or valid_session(request.cookies.get(DASHBOARD_SESSION_COOKIE, ""))
+    return {
+        "required": required,
+        "configured": configured,
+        "authenticated": authenticated,
+        "username": DASHBOARD_ADMIN_USERNAME if authenticated and required else None,
+        "mode": DASHBOARD_AUTH_MODE,
+    }
+
+
+@app.middleware("http")
+async def dashboard_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if not dashboard_auth_required():
+        return await call_next(request)
+    if path == "/" or path.startswith("/assets/") or path.startswith("/api/dashboard/auth/"):
+        return await call_next(request)
+    if not path.startswith("/api/dashboard"):
+        return await call_next(request)
+    if not dashboard_auth_configured():
+        return JSONResponse(status_code=503, content={"error": "Dashboard authentication is not configured."})
+    if not valid_session(request.cookies.get(DASHBOARD_SESSION_COOKIE, "")):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+    return await call_next(request)
 
 
 def iso_time(timestamp: float) -> str:
@@ -155,7 +264,14 @@ def check_llama() -> Dict[str, Any]:
     try:
         models = get_json(f"{LLAMA_BASE_URL}/models")
     except Exception as exc:
-        return error_payload(str(exc), base_url=LLAMA_BASE_URL, latency_ms=None, approximate_token_speed=None)
+        return error_payload(
+            f"Cannot reach llama service at {LLAMA_BASE_URL}/models. "
+            "Inside compose this should usually be http://vm-llama:8082/v1. "
+            f"Details: {exc}",
+            base_url=LLAMA_BASE_URL,
+            latency_ms=None,
+            approximate_token_speed=None,
+        )
 
     model_id = first_llama_model(models["body"]) or os.getenv("LLAMA_MODEL", "local-model")
     result: Dict[str, Any] = {
@@ -213,7 +329,102 @@ def check_qdrant() -> Dict[str, Any]:
             }
         except Exception as exc:
             errors.append(f"{url}: {exc}")
-    return error_payload("; ".join(errors), url=QDRANT_URL, latency_ms=None)
+    return error_payload(
+        "Cannot reach Qdrant. Inside compose this should usually be http://qdrant:6333. "
+        f"Checked {QDRANT_URL}. Details: {'; '.join(errors)}",
+        url=QDRANT_URL,
+        latency_ms=None,
+    )
+
+
+def non_secret_settings() -> Dict[str, Any]:
+    names = [
+        "SECURITY_MODE",
+        "DASHBOARD_AUTH_MODE",
+        "DASHBOARD_ADMIN_USERNAME",
+        "BIND_HOST",
+        "OPEN_WEBUI_BIND_HOST",
+        "DASHBOARD_BIND_HOST",
+        "LLAMA_BASE_URL",
+        "QDRANT_URL",
+        "QDRANT_HOST",
+        "QDRANT_PORT",
+        "MEMORY_COLLECTION",
+        "CODE_COLLECTION",
+        "MODEL_NAME",
+        "MODEL_FILE",
+        "MODEL_PROFILE",
+        "MEMORY_TOP_K",
+        "CODE_TOP_K",
+        "AGENTIC_MAX_STEPS",
+        "AGENTIC_MIN_CONFIDENCE",
+    ]
+    return {name: os.getenv(name, "") for name in names}
+
+
+def qdrant_request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    response = requests.request(method, f"{QDRANT_URL}{path}", json=body, timeout=max(HTTP_TIMEOUT_SECONDS, 10))
+    response.raise_for_status()
+    try:
+        parsed: Any = response.json()
+    except ValueError:
+        parsed = response.text
+    return {"ok": True, "body": parsed, "status_code": response.status_code}
+
+
+def qdrant_collections_payload() -> Dict[str, Any]:
+    data = qdrant_request("GET", "/collections")["body"]
+    collections = []
+    raw_collections = data.get("result", {}).get("collections", []) if isinstance(data, dict) else []
+    for item in raw_collections:
+        name = item.get("name")
+        if not name:
+            continue
+        detail: Dict[str, Any] = {"name": name}
+        try:
+            detail_body = qdrant_request("GET", f"/collections/{name}")["body"]
+            result = detail_body.get("result", {}) if isinstance(detail_body, dict) else {}
+            detail["points_count"] = result.get("points_count")
+            detail["vectors_count"] = result.get("vectors_count")
+            detail["status"] = result.get("status")
+        except Exception as exc:
+            detail["error"] = str(exc)
+        collections.append(detail)
+    return {"ok": True, "collections": collections}
+
+
+def delete_qdrant_collection(collection: str) -> None:
+    qdrant_request("DELETE", f"/collections/{collection}")
+
+
+def delete_demo_vectors() -> List[str]:
+    memory_collection = os.getenv("MEMORY_COLLECTION", "engineering-memory")
+    code_collection = os.getenv("CODE_COLLECTION", "code-memory")
+    warnings = []
+    try:
+        qdrant_request(
+            "POST",
+            f"/collections/{memory_collection}/points/delete",
+            {"filter": {"must": [{"key": "category", "match": {"value": "demo"}}]}},
+        )
+    except Exception as exc:
+        warnings.append(f"memory demo vector cleanup skipped: {exc}")
+    try:
+        qdrant_request(
+            "POST",
+            f"/collections/{code_collection}/points/delete",
+            {
+                "filter": {
+                    "should": [
+                        {"key": "repo", "match": {"value": "sample-python-app"}},
+                        {"key": "repo", "match": {"value": "sample-repository-app"}},
+                    ]
+                }
+            },
+        )
+    except Exception as exc:
+        warnings.append(f"code demo vector cleanup skipped: {exc}")
+    return warnings
 
 
 def memory_stats(path: Path) -> Dict[str, Any]:
@@ -639,12 +850,44 @@ def dashboard_index_path() -> Path:
     vite_index = FRONTEND_DIST_DIR / "index.html"
     if vite_index.exists():
         return vite_index
-    return STATIC_DIR / "index.html"
+    raise HTTPException(
+        status_code=503,
+        detail="Dashboard frontend build is missing. Run npm run build in scripts/dashboard/frontend or rebuild the dashboard image.",
+    )
 
 
 @app.get("/")
 def dashboard_home() -> FileResponse:
     return FileResponse(dashboard_index_path())
+
+
+@app.get("/api/dashboard/auth/status")
+def dashboard_auth_status(request: Request) -> Dict[str, Any]:
+    return auth_status_payload(request)
+
+
+@app.post("/api/dashboard/auth/login")
+def dashboard_login(req: LoginRequest, request: Request, response: Response) -> Dict[str, Any]:
+    if not dashboard_auth_required():
+        return auth_status_payload(request)
+    if not dashboard_auth_configured():
+        raise HTTPException(status_code=503, detail="Dashboard authentication is not configured.")
+    if req.username != DASHBOARD_ADMIN_USERNAME or not password_matches(req.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    set_session_cookie(response)
+    return {
+        "required": True,
+        "configured": True,
+        "authenticated": True,
+        "username": DASHBOARD_ADMIN_USERNAME,
+        "mode": DASHBOARD_AUTH_MODE,
+    }
+
+
+@app.post("/api/dashboard/auth/logout")
+def dashboard_logout(request: Request, response: Response) -> Dict[str, Any]:
+    clear_session_cookie(response)
+    return auth_status_payload(request) | {"authenticated": False}
 
 
 @app.get("/api/dashboard/status")
@@ -667,6 +910,50 @@ def dashboard_status() -> Dict[str, Any]:
         "log_capture": LOG_CAPTURE,
         "watchers": list_watchers(),
     }
+
+
+@app.get("/api/dashboard/settings")
+def dashboard_settings() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "settings": non_secret_settings(),
+        "paths": {
+            "engineering_memory": str(ENGINEERING_MEMORY_DIR),
+            "code_memory": str(CODE_MEMORY_DIR),
+            "memory_log": str(MEMORY_LOG),
+            "code_log": str(CODE_LOG),
+            "dashboard_log_dir": str(DASHBOARD_LOG_DIR),
+        },
+    }
+
+
+@app.get("/api/dashboard/qdrant/collections")
+def dashboard_qdrant_collections() -> Dict[str, Any]:
+    try:
+        return qdrant_collections_payload()
+    except Exception as exc:
+        return error_payload(str(exc), collections=[])
+
+
+@app.post("/api/dashboard/qdrant/reset")
+def dashboard_qdrant_reset(req: QdrantResetRequest) -> Dict[str, Any]:
+    expected = f"reset {req.target}"
+    if req.confirmation != expected:
+        raise HTTPException(status_code=400, detail=f"Type '{expected}' to confirm.")
+
+    warnings: List[str] = []
+    if req.target == "memory":
+        collection = os.getenv("MEMORY_COLLECTION", "engineering-memory")
+        delete_qdrant_collection(collection)
+    elif req.target == "code":
+        collection = os.getenv("CODE_COLLECTION", "code-memory")
+        delete_qdrant_collection(collection)
+    elif req.target == "demo":
+        warnings = delete_demo_vectors()
+    else:
+        raise HTTPException(status_code=400, detail="target must be memory, code, or demo")
+
+    return {"ok": True, "target": req.target, "warnings": warnings}
 
 
 @app.get("/api/dashboard/files")

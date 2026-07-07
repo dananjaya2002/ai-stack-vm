@@ -23,14 +23,22 @@ services:
       context: .
       dockerfile: docker/Dockerfile.memory-proxy
     container_name: memory-proxy
-    env_file:
-      - scripts/memory-proxy/memory-api.env
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
       AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
       ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      MEMORY_API_LOGS: ${MEMORY_API_LOGS:-false}
+      MEMORY_API_LOG_FILE: ${MEMORY_API_LOG_FILE:-/logs/memory/memory_api.log}
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_COLLECTION: ${MEMORY_COLLECTION:-engineering-memory}
       MEMORY_DIR: /memory
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
+      LLM_MODEL: ${MODEL_NAME:-qwen2.5-coder-3b-instruct}
+      MEMORY_TOP_K: ${MEMORY_TOP_K:-5}
+      MEMORY_SCORE_THRESHOLD: ${MEMORY_SCORE_THRESHOLD:-0.5}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${BIND_HOST:-127.0.0.1}:9002:9002"
     depends_on:
@@ -54,13 +62,24 @@ services:
       context: .
       dockerfile: docker/Dockerfile.code-proxy
     container_name: code-proxy
-    env_file:
-      - scripts/code-proxy/code-proxy.env
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
       AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
       ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      CODE_PROXY_LOGS: ${CODE_PROXY_LOGS:-true}
+      CODE_PROXY_LOG_FILE: ${CODE_PROXY_LOG_FILE:-/logs/code/code_proxy.log}
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_COLLECTION: ${CODE_COLLECTION:-code-memory}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
+      LLM_MODEL: ${MODEL_NAME:-qwen2.5-coder-3b-instruct}
+      CODE_TOP_K: ${CODE_TOP_K:-8}
+      SEARCH_LIMIT_MULTIPLIER: ${SEARCH_LIMIT_MULTIPLIER:-4}
+      CODE_SCORE_THRESHOLD: ${CODE_SCORE_THRESHOLD:-0.25}
+      MAX_CHUNKS_PER_FILE: ${MAX_CHUNKS_PER_FILE:-2}
+      MAX_TEXT_PREVIEW_CHARS: ${MAX_TEXT_PREVIEW_CHARS:-1200}
+      REPOS_ROOT: /code-memory
     ports:
       - "${BIND_HOST:-127.0.0.1}:9001:9001"
     depends_on:

@@ -29,15 +29,20 @@ Usage:
   ./ai-stack build
   ./ai-stack up
   ./ai-stack dashboard
+  ./ai-stack agentic-rag [up|down|status|logs]
   ./ai-stack down
   ./ai-stack restart
   ./ai-stack status
-  ./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|all]
+  ./ai-stack smoke [production]
+  ./ai-stack qdrant collections
+  ./ai-stack qdrant reset memory|code|demo
+  ./ai-stack benchmark
+  ./ai-stack logs [llama|qdrant|code|memory|webui|dashboard|agentic-rag|all]
   ./ai-stack index memory
   ./ai-stack index code <repo-path>
   ./ai-stack search code "query"
   ./ai-stack search memory "query"
-  ./ai-stack demo [clean]
+  ./ai-stack demo [clean|run|reset-vectors]
 
 First run:
   ./ai-stack install
@@ -119,8 +124,44 @@ load_env() {
   BIND_HOST="${BIND_HOST:-127.0.0.1}"
   OPEN_WEBUI_BIND_HOST="${OPEN_WEBUI_BIND_HOST:-0.0.0.0}"
   DASHBOARD_BIND_HOST="${DASHBOARD_BIND_HOST:-0.0.0.0}"
+  DASHBOARD_AUTH_MODE="${DASHBOARD_AUTH_MODE:-auto}"
+  DASHBOARD_ADMIN_USERNAME="${DASHBOARD_ADMIN_USERNAME:-admin}"
+  DASHBOARD_ADMIN_PASSWORD_HASH="${DASHBOARD_ADMIN_PASSWORD_HASH:-}"
+  DASHBOARD_SESSION_SECRET="${DASHBOARD_SESSION_SECRET:-}"
   ENABLE_RATE_LIMIT="${ENABLE_RATE_LIMIT:-true}"
   RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-60}"
+  QDRANT_HOST="${QDRANT_HOST:-qdrant}"
+  QDRANT_PORT="${QDRANT_PORT:-6333}"
+  MEMORY_COLLECTION="${MEMORY_COLLECTION:-engineering-memory}"
+  CODE_COLLECTION="${CODE_COLLECTION:-code-memory}"
+  LLM_BASE_URL="${LLM_BASE_URL:-http://vm-llama:8082/v1}"
+  EMBED_MODEL_NAME="${EMBED_MODEL_NAME:-all-MiniLM-L6-v2}"
+  HF_TOKEN="${HF_TOKEN:-}"
+  MEMORY_API_LOGS="${MEMORY_API_LOGS:-false}"
+  MEMORY_API_LOG_FILE="${MEMORY_API_LOG_FILE:-/logs/memory/memory_api.log}"
+  MEMORY_TOP_K="${MEMORY_TOP_K:-5}"
+  MEMORY_SCORE_THRESHOLD="${MEMORY_SCORE_THRESHOLD:-0.5}"
+  CODE_PROXY_LOGS="${CODE_PROXY_LOGS:-true}"
+  CODE_PROXY_LOG_FILE="${CODE_PROXY_LOG_FILE:-/logs/code/code_proxy.log}"
+  CODE_TOP_K="${CODE_TOP_K:-8}"
+  SEARCH_LIMIT_MULTIPLIER="${SEARCH_LIMIT_MULTIPLIER:-4}"
+  CODE_SCORE_THRESHOLD="${CODE_SCORE_THRESHOLD:-0.25}"
+  MAX_CHUNKS_PER_FILE="${MAX_CHUNKS_PER_FILE:-2}"
+  MAX_TEXT_PREVIEW_CHARS="${MAX_TEXT_PREVIEW_CHARS:-1200}"
+  MAX_CHUNK_CHARS="${MAX_CHUNK_CHARS:-4000}"
+  MAX_CONTEXT_CHARS="${MAX_CONTEXT_CHARS:-50000}"
+  AGENTIC_RAG_LOGS="${AGENTIC_RAG_LOGS:-true}"
+  AGENTIC_RAG_LOG_FILE="${AGENTIC_RAG_LOG_FILE:-/logs/agentic-rag/agentic_rag.log}"
+  ENABLE_INDEX_V2="${ENABLE_INDEX_V2:-true}"
+  ENABLE_AGENTIC_RETRIEVAL="${ENABLE_AGENTIC_RETRIEVAL:-true}"
+  AGENTIC_MAX_STEPS="${AGENTIC_MAX_STEPS:-4}"
+  AGENTIC_INITIAL_SUBQUERIES="${AGENTIC_INITIAL_SUBQUERIES:-3}"
+  AGENTIC_FOLLOWUP_TOP_K="${AGENTIC_FOLLOWUP_TOP_K:-4}"
+  AGENTIC_MAX_TOTAL_CHUNKS="${AGENTIC_MAX_TOTAL_CHUNKS:-16}"
+  AGENTIC_MIN_CONFIDENCE="${AGENTIC_MIN_CONFIDENCE:-0.70}"
+  AGENTIC_TOP_K_PER_QUERY="${AGENTIC_TOP_K_PER_QUERY:-3}"
+  SIMPLE_TOP_K="${SIMPLE_TOP_K:-6}"
+  AGENTIC_SCORE_THRESHOLD="${AGENTIC_SCORE_THRESHOLD:-0.20}"
 }
 
 set_env_var() {
@@ -295,21 +336,34 @@ write_root_env() {
   fi
 
   cat > "${ENV_FILE}" <<EOF
+# AI Stack runtime
 AI_STACK_HOME=${home_dir}
-MODEL_FILE=${DEFAULT_MODEL_FILE}
+
+# Model selection
 MODEL_NAME=${DEFAULT_MODEL_NAME}
+MODEL_FILE=${DEFAULT_MODEL_FILE}
 MODEL_PROFILE=laptop
 MODEL_URL=${DEFAULT_MODEL_URL}
 MODEL_SHA256=
 
-SECURITY_MODE=development
-AI_STACK_API_KEY=
+# Network binding
 BIND_HOST=127.0.0.1
 OPEN_WEBUI_BIND_HOST=0.0.0.0
 DASHBOARD_BIND_HOST=0.0.0.0
+
+# Security
+SECURITY_MODE=development
+AI_STACK_API_KEY=
 ENABLE_RATE_LIMIT=true
 RATE_LIMIT_PER_MINUTE=60
 
+# Dashboard login
+DASHBOARD_AUTH_MODE=auto
+DASHBOARD_ADMIN_USERNAME=admin
+DASHBOARD_ADMIN_PASSWORD_HASH=
+DASHBOARD_SESSION_SECRET=
+
+# llama.cpp runtime
 LLAMA_THREADS=${threads}
 LLAMA_CONTEXT=8192
 LLAMA_BATCH=512
@@ -318,8 +372,102 @@ LLAMA_CPU_LIMIT=${cpu_limit}
 LLAMA_MEMORY_LIMIT=${memory_limit}
 LLAMA_CPU_RESERVATION=4
 LLAMA_MEMORY_RESERVATION=${memory_reservation}
+
+# Shared retrieval services
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
+MEMORY_COLLECTION=engineering-memory
+CODE_COLLECTION=code-memory
+LLM_BASE_URL=http://vm-llama:8082/v1
+EMBED_MODEL_NAME=all-MiniLM-L6-v2
+HF_TOKEN=
+
+# Memory proxy
+MEMORY_API_LOGS=false
+MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
+MEMORY_TOP_K=5
+MEMORY_SCORE_THRESHOLD=0.5
+
+# Code proxy
+CODE_PROXY_LOGS=true
+CODE_PROXY_LOG_FILE=/logs/code/code_proxy.log
+CODE_TOP_K=8
+SEARCH_LIMIT_MULTIPLIER=4
+CODE_SCORE_THRESHOLD=0.25
+MAX_CHUNKS_PER_FILE=2
+MAX_TEXT_PREVIEW_CHARS=1200
+MAX_CHUNK_CHARS=4000
+MAX_CONTEXT_CHARS=50000
+
+# Agentic RAG
+AGENTIC_RAG_LOGS=true
+AGENTIC_RAG_LOG_FILE=/logs/agentic-rag/agentic_rag.log
+ENABLE_INDEX_V2=true
+ENABLE_AGENTIC_RETRIEVAL=true
+AGENTIC_MAX_STEPS=4
+AGENTIC_INITIAL_SUBQUERIES=3
+AGENTIC_FOLLOWUP_TOP_K=4
+AGENTIC_MAX_TOTAL_CHUNKS=16
+AGENTIC_MIN_CONFIDENCE=0.70
+AGENTIC_TOP_K_PER_QUERY=3
+SIMPLE_TOP_K=6
+AGENTIC_SCORE_THRESHOLD=0.20
 EOF
   info "created .env"
+}
+
+ensure_env_var() {
+  local key="$1"
+  local value="$2"
+  if [[ ! -f "${ENV_FILE}" ]] || ! grep -q "^${key}=" "${ENV_FILE}"; then
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
+  fi
+}
+
+ensure_root_env_defaults() {
+  ensure_env_var SECURITY_MODE development
+  ensure_env_var AI_STACK_API_KEY ""
+  ensure_env_var BIND_HOST 127.0.0.1
+  ensure_env_var OPEN_WEBUI_BIND_HOST 0.0.0.0
+  ensure_env_var DASHBOARD_BIND_HOST 0.0.0.0
+  ensure_env_var DASHBOARD_AUTH_MODE auto
+  ensure_env_var DASHBOARD_ADMIN_USERNAME admin
+  ensure_env_var DASHBOARD_ADMIN_PASSWORD_HASH ""
+  ensure_env_var DASHBOARD_SESSION_SECRET ""
+  ensure_env_var ENABLE_RATE_LIMIT true
+  ensure_env_var RATE_LIMIT_PER_MINUTE 60
+  ensure_env_var QDRANT_HOST qdrant
+  ensure_env_var QDRANT_PORT 6333
+  ensure_env_var MEMORY_COLLECTION engineering-memory
+  ensure_env_var CODE_COLLECTION code-memory
+  ensure_env_var LLM_BASE_URL http://vm-llama:8082/v1
+  ensure_env_var EMBED_MODEL_NAME all-MiniLM-L6-v2
+  ensure_env_var HF_TOKEN ""
+  ensure_env_var MEMORY_API_LOGS false
+  ensure_env_var MEMORY_API_LOG_FILE /logs/memory/memory_api.log
+  ensure_env_var MEMORY_TOP_K 5
+  ensure_env_var MEMORY_SCORE_THRESHOLD 0.5
+  ensure_env_var CODE_PROXY_LOGS true
+  ensure_env_var CODE_PROXY_LOG_FILE /logs/code/code_proxy.log
+  ensure_env_var CODE_TOP_K 8
+  ensure_env_var SEARCH_LIMIT_MULTIPLIER 4
+  ensure_env_var CODE_SCORE_THRESHOLD 0.25
+  ensure_env_var MAX_CHUNKS_PER_FILE 2
+  ensure_env_var MAX_TEXT_PREVIEW_CHARS 1200
+  ensure_env_var MAX_CHUNK_CHARS 4000
+  ensure_env_var MAX_CONTEXT_CHARS 50000
+  ensure_env_var AGENTIC_RAG_LOGS true
+  ensure_env_var AGENTIC_RAG_LOG_FILE /logs/agentic-rag/agentic_rag.log
+  ensure_env_var ENABLE_INDEX_V2 true
+  ensure_env_var ENABLE_AGENTIC_RETRIEVAL true
+  ensure_env_var AGENTIC_MAX_STEPS 4
+  ensure_env_var AGENTIC_INITIAL_SUBQUERIES 3
+  ensure_env_var AGENTIC_FOLLOWUP_TOP_K 4
+  ensure_env_var AGENTIC_MAX_TOTAL_CHUNKS 16
+  ensure_env_var AGENTIC_MIN_CONFIDENCE 0.70
+  ensure_env_var AGENTIC_TOP_K_PER_QUERY 3
+  ensure_env_var SIMPLE_TOP_K 6
+  ensure_env_var AGENTIC_SCORE_THRESHOLD 0.20
 }
 
 cmd_profile() {
@@ -616,66 +764,6 @@ cmd_install() {
   install_stack
 }
 
-write_proxy_envs() {
-  mkdir -p "${ROOT_DIR}/scripts/code-proxy" "${ROOT_DIR}/scripts/memory-proxy"
-
-  if [[ ! -f "${ROOT_DIR}/scripts/code-proxy/code-proxy.env" ]]; then
-    cat > "${ROOT_DIR}/scripts/code-proxy/code-proxy.env" <<'EOF'
-CODE_PROXY_LOGS=true
-CODE_PROXY_LOG_FILE=/logs/code-proxy/code_proxy.log
-
-SECURITY_MODE=development
-AI_STACK_API_KEY=
-ENABLE_RATE_LIMIT=true
-RATE_LIMIT_PER_MINUTE=60
-
-QDRANT_HOST=qdrant
-QDRANT_PORT=6333
-QDRANT_COLLECTION=code-memory
-
-LLM_BASE_URL=http://vm-llama:8082/v1
-LLM_MODEL=qwen2.5-coder-3b-instruct
-
-CODE_TOP_K=8
-SEARCH_LIMIT_MULTIPLIER=4
-CODE_SCORE_THRESHOLD=0.25
-MAX_CHUNKS_PER_FILE=2
-MAX_TEXT_PREVIEW_CHARS=1200
-REPOS_ROOT=/code-memory
-EOF
-    info "created scripts/code-proxy/code-proxy.env"
-  else
-    info "scripts/code-proxy/code-proxy.env already exists"
-  fi
-
-  if [[ ! -f "${ROOT_DIR}/scripts/memory-proxy/memory-api.env" ]]; then
-    cat > "${ROOT_DIR}/scripts/memory-proxy/memory-api.env" <<'EOF'
-MEMORY_API_LOGS=false
-MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
-
-SECURITY_MODE=development
-AI_STACK_API_KEY=
-ENABLE_RATE_LIMIT=true
-RATE_LIMIT_PER_MINUTE=60
-
-QDRANT_HOST=qdrant
-QDRANT_PORT=6333
-QDRANT_COLLECTION=engineering-memory
-MEMORY_DIR=/memory
-
-LLM_BASE_URL=http://vm-llama:8082/v1
-LLM_MODEL=qwen2.5-coder-3b-instruct
-
-MEMORY_TOP_K=5
-MEMORY_SCORE_THRESHOLD=0.5
-HF_TOKEN=
-EOF
-    info "created scripts/memory-proxy/memory-api.env"
-  else
-    info "scripts/memory-proxy/memory-api.env already exists"
-  fi
-}
-
 available_memory_gb() {
   if [[ -r /proc/meminfo ]]; then
     awk '/MemAvailable/ { printf "%.0f", $2 / 1024 / 1024 }' /proc/meminfo
@@ -736,35 +824,15 @@ model_description_for_choice() {
   esac
 }
 
-write_dashboard_env() {
-  mkdir -p "${ROOT_DIR}/scripts/dashboard"
-
-  if [[ ! -f "${ROOT_DIR}/scripts/dashboard/dashboard.env" ]]; then
-    cat > "${ROOT_DIR}/scripts/dashboard/dashboard.env" <<'EOF'
-LLAMA_BASE_URL=http://vm-llama:8082/v1
-QDRANT_URL=http://qdrant:6333
-QDRANT_HOST=qdrant
-QDRANT_PORT=6333
-ENGINEERING_MEMORY_DIR=/memory/engineering-memory
-CODE_MEMORY_DIR=/memory/code-memory
-MEMORY_LOG=/logs/memory/memory_api.log
-CODE_LOG=/logs/code/code_proxy.log
-EOF
-    info "created scripts/dashboard/dashboard.env"
-  else
-    info "scripts/dashboard/dashboard.env already exists"
-  fi
-}
-
 cmd_init() {
   write_root_env
+  ensure_root_env_defaults
   load_env
   mkdir -p \
     "${AI_STACK_HOME}/models" \
     "${AI_STACK_HOME}/memory/code-memory" \
     "${AI_STACK_HOME}/memory/engineering-memory"
   info "created runtime directories under ${AI_STACK_HOME}"
-  write_proxy_envs
   info "init complete"
 }
 
@@ -845,10 +913,60 @@ cmd_up() {
 
 cmd_dashboard() {
   cmd_init
-  write_dashboard_env
   load_env
   compose -f docker-compose.dashboard.yml up -d --build dashboard
   info "dashboard API: http://localhost:9100/api/dashboard/status"
+}
+
+compose_network_exists() {
+  local network="${AI_STACK_NETWORK:-ai-stack-vm_default}"
+  if have docker && docker network inspect "${network}" >/dev/null 2>&1; then
+    return 0
+  fi
+  if have podman && podman network exists "${network}" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+cmd_agentic_rag_status() {
+  load_env
+  local curl_args=(--silent --fail --max-time 3)
+  if [[ -n "${AI_STACK_API_KEY}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
+  if curl "${curl_args[@]}" "http://localhost:9200/v1/models" >/dev/null; then
+    info "agentic-rag: healthy"
+  else
+    warn "agentic-rag: not responding at http://localhost:9200/v1/models"
+  fi
+}
+
+cmd_agentic_rag() {
+  local sub="${1:-up}"
+  case "${sub}" in
+    up)
+      cmd_init
+      load_env
+      if ! compose_network_exists; then
+        fail "main stack network was not found. Run ./ai-stack up before starting agentic-rag."
+      fi
+      compose -f docker-compose.agentic-rag.yml up -d --build agentic-rag
+      info "agentic-rag API: http://localhost:9200/v1"
+      ;;
+    down)
+      compose -f docker-compose.agentic-rag.yml down
+      ;;
+    status)
+      cmd_agentic_rag_status
+      ;;
+    logs)
+      compose -f docker-compose.agentic-rag.yml logs -f agentic-rag
+      ;;
+    *)
+      fail "usage: ./ai-stack agentic-rag [up|down|status|logs]"
+      ;;
+  esac
 }
 
 cmd_down() {
@@ -870,7 +988,8 @@ cmd_status() {
     "qdrant:http://localhost:6333" \
     "llama:http://localhost:8082/v1/models" \
     "code-proxy:http://localhost:9001/v1/models" \
-    "memory-proxy:http://localhost:9002/v1/models"; do
+    "memory-proxy:http://localhost:9002/v1/models" \
+    "agentic-rag:http://localhost:9200/v1/models"; do
     local name="${endpoint%%:*}"
     local url="${endpoint#*:}"
     if curl "${curl_args[@]}" "${url}" >/dev/null; then
@@ -879,6 +998,185 @@ cmd_status() {
       warn "${name}: not responding at ${url}"
     fi
   done
+}
+
+auth_header_args() {
+  if [[ -n "${AI_STACK_API_KEY:-}" ]]; then
+    printf '%s\n' "-H" "Authorization: Bearer ${AI_STACK_API_KEY}"
+  fi
+}
+
+curl_check() {
+  local name="$1"
+  local url="$2"
+  shift 2
+  local code
+  code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 "$@" "${url}" || true)"
+  if [[ "${code}" =~ ^[23] ]]; then
+    info "${name}: ok (${code})"
+    return 0
+  fi
+  warn "${name}: failed (${code:-curl-error}) at ${url}"
+  return 1
+}
+
+cmd_smoke() {
+  local mode="${1:-development}"
+  local failures=0
+  cmd_init
+  load_env
+
+  compose_available || fail "compose is not available"
+  [[ -f "${ENV_FILE}" ]] || { warn ".env is missing"; failures=$((failures + 1)); }
+  [[ -f "${AI_STACK_HOME}/models/${MODEL_FILE}" ]] || { warn "model file is missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"; failures=$((failures + 1)); }
+
+  curl_check "qdrant" "http://localhost:6333" || failures=$((failures + 1))
+  curl_check "llama" "http://localhost:8082/v1/models" || failures=$((failures + 1))
+
+  local auth_args=()
+  if [[ -n "${AI_STACK_API_KEY}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
+  curl_check "code-proxy" "http://localhost:9001/v1/models" "${auth_args[@]}" || failures=$((failures + 1))
+  curl_check "memory-proxy" "http://localhost:9002/v1/models" "${auth_args[@]}" || failures=$((failures + 1))
+  curl_check "dashboard" "http://localhost:9100/api/dashboard/auth/status" || failures=$((failures + 1))
+  curl_check "agentic-rag" "http://localhost:9200/v1/models" "${auth_args[@]}" || failures=$((failures + 1))
+
+  if [[ "${mode}" == "production" ]]; then
+    [[ -n "${AI_STACK_API_KEY}" ]] || fail "AI_STACK_API_KEY is required for production smoke checks"
+    local no_auth_code with_auth_code
+    no_auth_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 http://localhost:9001/v1/models || true)"
+    with_auth_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 -H "Authorization: Bearer ${AI_STACK_API_KEY}" http://localhost:9001/v1/models || true)"
+    if [[ "${no_auth_code}" == "401" && "${with_auth_code}" =~ ^[23] ]]; then
+      info "production bearer auth: ok"
+    else
+      warn "production bearer auth: expected 401 without token and 2xx with token, got ${no_auth_code}/${with_auth_code}"
+      failures=$((failures + 1))
+    fi
+  elif [[ "${mode}" != "development" ]]; then
+    fail "usage: ./ai-stack smoke [production]"
+  fi
+
+  if (( failures > 0 )); then
+    fail "smoke checks failed: ${failures}"
+  fi
+  info "smoke checks passed"
+}
+
+qdrant_delete_collection() {
+  local collection="$1"
+  curl --silent --show-error --fail --max-time 10 \
+    -X DELETE "http://localhost:6333/collections/${collection}" >/dev/null
+}
+
+qdrant_delete_points() {
+  local collection="$1"
+  local payload="$2"
+  curl --silent --show-error --fail --max-time 20 \
+    -H "Content-Type: application/json" \
+    -X POST "http://localhost:6333/collections/${collection}/points/delete" \
+    -d "${payload}" >/dev/null
+}
+
+confirm_reset() {
+  local target="$1"
+  local answer
+  read -r -p "Type 'reset ${target}' to continue: " answer || exit 0
+  [[ "${answer}" == "reset ${target}" ]] || fail "confirmation did not match"
+}
+
+cmd_qdrant() {
+  local sub="${1:-}"
+  local target="${2:-}"
+  load_env
+  case "${sub}" in
+    collections)
+      curl --silent --show-error --fail --max-time 10 "http://localhost:6333/collections"
+      printf '\n'
+      ;;
+    reset)
+      case "${target}" in
+        memory)
+          confirm_reset memory
+          qdrant_delete_collection "${MEMORY_COLLECTION:-engineering-memory}"
+          info "deleted Qdrant collection: ${MEMORY_COLLECTION:-engineering-memory}"
+          ;;
+        code)
+          confirm_reset code
+          qdrant_delete_collection "${CODE_COLLECTION:-code-memory}"
+          info "deleted Qdrant collection: ${CODE_COLLECTION:-code-memory}"
+          ;;
+        demo)
+          confirm_reset demo
+          qdrant_delete_points "${MEMORY_COLLECTION:-engineering-memory}" '{"filter":{"must":[{"key":"category","match":{"value":"demo"}}]}}' || warn "demo memory vector cleanup skipped or failed"
+          qdrant_delete_points "${CODE_COLLECTION:-code-memory}" '{"filter":{"should":[{"key":"repo","match":{"value":"sample-python-app"}},{"key":"repo","match":{"value":"sample-repository-app"}}]}}' || warn "demo code vector cleanup skipped or failed"
+          info "deleted demo vectors where matching payloads were found"
+          ;;
+        *)
+          fail "usage: ./ai-stack qdrant reset memory|code|demo"
+          ;;
+      esac
+      ;;
+    *)
+      fail "usage: ./ai-stack qdrant collections|reset"
+      ;;
+  esac
+}
+
+benchmark_curl() {
+  local method="$1"
+  local url="$2"
+  local data="${3:-}"
+  shift 3 || true
+  local curl_args=(--silent --output /dev/null --write-out '%{http_code} %{time_total}' --max-time 30 -X "${method}")
+  if [[ -n "${data}" ]]; then
+    curl_args+=(-H "Content-Type: application/json" -d "${data}")
+  fi
+  if [[ -n "${AI_STACK_API_KEY:-}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+  fi
+  curl "${curl_args[@]}" "${url}" || true
+}
+
+cmd_benchmark() {
+  cmd_init
+  load_env
+  mkdir -p "${ROOT_DIR}/docs/benchmarks"
+  local report="${ROOT_DIR}/docs/benchmarks/latest.md"
+  local now
+  now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+  local llama_models llama_chat dashboard_status memory_models code_models agentic_models
+  llama_models="$(benchmark_curl GET http://localhost:8082/v1/models)"
+  llama_chat="$(benchmark_curl POST http://localhost:8082/v1/chat/completions '{"model":"'"${MODEL_NAME}"'","messages":[{"role":"user","content":"Reply with ok"}],"max_tokens":8,"temperature":0}')"
+  dashboard_status="$(benchmark_curl GET http://localhost:9100/api/dashboard/status)"
+  memory_models="$(benchmark_curl GET http://localhost:9002/v1/models)"
+  code_models="$(benchmark_curl GET http://localhost:9001/v1/models)"
+  agentic_models="$(benchmark_curl GET http://localhost:9200/v1/models)"
+
+  cat > "${report}" <<EOF
+# Latest Benchmark
+
+Generated: ${now}
+
+| Scenario | HTTP | Seconds |
+|---|---:|---:|
+| llama.cpp /v1/models | ${llama_models% *} | ${llama_models#* } |
+| llama.cpp short chat completion | ${llama_chat% *} | ${llama_chat#* } |
+| dashboard /api/dashboard/status | ${dashboard_status% *} | ${dashboard_status#* } |
+| memory-proxy /v1/models | ${memory_models% *} | ${memory_models#* } |
+| code-proxy /v1/models | ${code_models% *} | ${code_models#* } |
+| agentic-rag /v1/models | ${agentic_models% *} | ${agentic_models#* } |
+
+## Environment
+
+- Model: ${MODEL_NAME}
+- Model file: ${MODEL_FILE}
+- Profile: ${MODEL_PROFILE}
+- Security mode: ${SECURITY_MODE}
+
+EOF
+  info "wrote ${report}"
 }
 
 cmd_logs() {
@@ -890,6 +1188,7 @@ cmd_logs() {
     memory) compose logs -f memory-proxy ;;
     webui) compose logs -f open-webui ;;
     dashboard) compose -f docker-compose.dashboard.yml logs -f dashboard ;;
+    agentic-rag) compose -f docker-compose.agentic-rag.yml logs -f agentic-rag ;;
     all) compose logs -f ;;
     *) fail "unknown log target: ${target}" ;;
   esac
@@ -906,7 +1205,6 @@ dashboard_image_available() {
 }
 
 ensure_indexer_image() {
-  write_dashboard_env
   if dashboard_image_available; then
     return
   fi
@@ -1105,8 +1403,17 @@ cmd_demo() {
   if [[ "${sub}" == "clean" ]]; then
     cmd_demo_clean
     return
+  elif [[ "${sub}" == "reset-vectors" ]]; then
+    cmd_qdrant reset demo
+    return
+  elif [[ "${sub}" == "run" ]]; then
+    shift || true
+    cmd_up
+    cmd_dashboard
+    cmd_agentic_rag up
+    sub=""
   elif [[ -n "${sub}" ]]; then
-    fail "usage: ./ai-stack demo [clean]"
+    fail "usage: ./ai-stack demo [clean|run|reset-vectors]"
   fi
 
   cmd_init
@@ -1202,9 +1509,13 @@ main() {
     build) cmd_build "$@" ;;
     up) cmd_up "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
+    agentic-rag) cmd_agentic_rag "$@" ;;
     down) cmd_down "$@" ;;
     restart) cmd_restart "$@" ;;
     status) cmd_status "$@" ;;
+    smoke) cmd_smoke "$@" ;;
+    qdrant) cmd_qdrant "$@" ;;
+    benchmark) cmd_benchmark "$@" ;;
     logs) cmd_logs "$@" ;;
     index) cmd_index "$@" ;;
     search) cmd_search "$@" ;;

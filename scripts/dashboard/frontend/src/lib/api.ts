@@ -1,16 +1,19 @@
 import type {
+  AuthStatus,
   DashboardStatus,
+  DashboardSettingsResponse,
   FilesResponse,
   JobsResponse,
   LogSource,
   LogsResponse,
+  QdrantCollectionsResponse,
   Scope,
   UploadResponse,
   WatchersResponse,
 } from "../types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await fetch(path, { credentials: "same-origin", ...init });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = data.detail || data.error || `Request failed: ${response.status}`;
@@ -20,6 +23,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const dashboardApi = {
+  authStatus: () => request<AuthStatus>("/api/dashboard/auth/status"),
+  login: (payload: { username: string; password: string }) =>
+    request<AuthStatus>("/api/dashboard/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  logout: () => request<AuthStatus>("/api/dashboard/auth/logout", { method: "POST" }),
   status: () => request<DashboardStatus>("/api/dashboard/status"),
   files: (scope: Scope, path = "") =>
     request<FilesResponse>(
@@ -61,4 +72,12 @@ export const dashboardApi = {
   watchers: () => request<WatchersResponse>("/api/dashboard/watchers"),
   watcherAction: (scope: Scope, action: "start" | "stop") =>
     request<{ ok: boolean; watcher: unknown }>(`/api/dashboard/watchers/${scope}/${action}`, { method: "POST" }),
+  settings: () => request<DashboardSettingsResponse>("/api/dashboard/settings"),
+  qdrantCollections: () => request<QdrantCollectionsResponse>("/api/dashboard/qdrant/collections"),
+  qdrantReset: (target: "memory" | "code" | "demo", confirmation: string) =>
+    request<{ ok: boolean; target: string; warnings?: string[] }>("/api/dashboard/qdrant/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, confirmation }),
+    }),
 };

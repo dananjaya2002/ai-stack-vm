@@ -7,6 +7,9 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.config_loader import default_config_path, load_json_object, require_string_set
+
 
 # -----------------------------
 # Configuration
@@ -26,44 +29,17 @@ QDRANT_COLLECTION = os.getenv(
 )
 
 DEBOUNCE_SECONDS = int(os.getenv("CODE_WATCH_DEBOUNCE_SECONDS", "5"))
+CODE_WATCH_CONFIG_FILE = default_config_path("CODE_WATCH_CONFIG_FILE", "code_watch.json", __file__)
+CODE_WATCH_CONFIG = load_json_object(CODE_WATCH_CONFIG_FILE, "Code watch")
 
 
 # -----------------------------
 # Ignore rules
 # -----------------------------
 
-IGNORED_DIRS = {
-    ".git",
-    "node_modules",
-    "dist",
-    "build",
-    "target",
-    ".next",
-    ".nuxt",
-    "coverage",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".idea",
-    ".vscode",
-}
-
-IGNORED_SUFFIXES = {
-    ".pyc",
-    ".pyo",
-    ".log",
-    ".tmp",
-    ".swp",
-    ".part",
-    ".lock",
-    ".map",
-}
-
-IGNORED_NAMES = {
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-}
+IGNORED_DIRS = require_string_set(CODE_WATCH_CONFIG, "ignored_dirs", "Code watch")
+IGNORED_SUFFIXES = require_string_set(CODE_WATCH_CONFIG, "ignored_suffixes", "Code watch", lowercase=True)
+IGNORED_NAMES = require_string_set(CODE_WATCH_CONFIG, "ignored_names", "Code watch")
 
 
 pending = {}
@@ -82,7 +58,7 @@ def should_ignore(path: Path) -> bool:
     if path.name.startswith(".") and path.name not in {".gitignore"}:
         return True
 
-    if path.suffix in IGNORED_SUFFIXES:
+    if path.suffix.lower() in IGNORED_SUFFIXES:
         return True
 
     return False

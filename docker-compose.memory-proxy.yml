@@ -1,14 +1,11 @@
-# docker-compose.memory-proxy.yml  –  Runs memory-proxy + Qdrant only
+# Runs memory-proxy + Qdrant only.
 #
 # Usage:
 #   docker compose -f docker-compose.memory-proxy.yml up -d
 #   docker compose -f docker-compose.memory-proxy.yml down
 #   docker compose -f docker-compose.memory-proxy.yml logs -f
 
-version: "3.9"
-
 services:
-
   qdrant:
     image: qdrant/qdrant
     container_name: qdrant
@@ -24,22 +21,29 @@ services:
       context: .
       dockerfile: docker/Dockerfile.memory-proxy
     container_name: memory-proxy
-    env_file:
-      - scripts/memory-proxy/.example.memory-api.env
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
       AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
       ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
-      QDRANT_HOST: qdrant
+      MEMORY_API_LOGS: ${MEMORY_API_LOGS:-false}
+      MEMORY_API_LOG_FILE: ${MEMORY_API_LOG_FILE:-/logs/memory/memory_api.log}
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_COLLECTION: ${MEMORY_COLLECTION:-engineering-memory}
       MEMORY_DIR: /memory
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
+      LLM_MODEL: ${MODEL_NAME:-qwen2.5-coder-3b-instruct}
+      MEMORY_TOP_K: ${MEMORY_TOP_K:-5}
+      MEMORY_SCORE_THRESHOLD: ${MEMORY_SCORE_THRESHOLD:-0.5}
+      HF_TOKEN: ${HF_TOKEN:-}
     ports:
       - "${BIND_HOST:-127.0.0.1}:9002:9002"
     depends_on:
       - qdrant
     volumes:
       - memory_logs:/logs/memory
-      - ${HOME}/ai-stack/memory/engineering-memory:/memory/engineering-memory:ro
+      - ${AI_STACK_HOME}/memory/engineering-memory:/memory:ro
     restart: unless-stopped
 
 volumes:

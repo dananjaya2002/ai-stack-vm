@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check shell helper syntax
+        run: bash -n ai-stack
+
+      - name: Compile Python sources
+        run: python -m compileall scripts
+
+      - name: Run Python unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Check Markdown references
+        run: python scripts/check_markdown_refs.py
+
+      - name: Install dashboard frontend dependencies
+        working-directory: scripts/dashboard/frontend
+        run: npm install
+
+      - name: Typecheck dashboard frontend
+        working-directory: scripts/dashboard/frontend
+        run: npm run typecheck
+
+      - name: Build dashboard frontend
+        working-directory: scripts/dashboard/frontend
+        run: npm run build

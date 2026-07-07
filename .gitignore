@@ -11,7 +11,8 @@ __pycache__/
 *.log
 
 # Memory (optional, depends on your use)
-
+memory/*
+!memory/README.md
 
 # Ignore all files inside folders
 models/*
@@ -27,6 +28,8 @@ open-webui/*
 
 #environment files
 *.env
-!.example.memory-api.env
-!.example.code-proxy.env
-!.example.dashboard.env
+!.env.example
+
+# Frontend build/dependencies
+node_modules/
+dist/

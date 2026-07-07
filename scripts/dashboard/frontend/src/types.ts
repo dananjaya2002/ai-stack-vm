@@ -1,6 +1,14 @@
 export type Scope = "engineering" | "code";
-export type TabId = "overview" | "logs" | "files" | "upload" | "repos" | "indexing" | "watchers";
+export type TabId = "overview" | "logs" | "files" | "upload" | "repos" | "indexing" | "watchers" | "qdrant" | "settings";
 export type LogSource = "dashboard" | "watchers" | "memory" | "code";
+
+export interface AuthStatus {
+  required: boolean;
+  configured: boolean;
+  authenticated: boolean;
+  username?: string | null;
+  mode: string;
+}
 
 export interface TokenSpeed {
   tokens_per_second: number | null;
@@ -112,6 +120,26 @@ export interface WatcherStatus {
 export interface WatchersResponse {
   ok: boolean;
   watchers: Record<Scope, WatcherStatus>;
+}
+
+export interface DashboardSettingsResponse {
+  ok: boolean;
+  settings: Record<string, string>;
+  paths: Record<string, string>;
+}
+
+export interface QdrantCollection {
+  name: string;
+  points_count?: number | null;
+  vectors_count?: number | null;
+  status?: string | null;
+  error?: string | null;
+}
+
+export interface QdrantCollectionsResponse {
+  ok: boolean;
+  collections: QdrantCollection[];
+  error?: string | null;
 }
 
 export interface UploadResponse {
