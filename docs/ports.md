@@ -10,3 +10,4 @@
 | code-proxy        | 9001  | Code-RAG OpenAI-compatible proxy   |
 | memory-proxy      | 9002  | Memory-RAG OpenAI-compatible proxy |
 | dashboard         | 9100  | Optional management website/API    |
+| agentic-rag       | 9200  | Agentic retrieval OpenAI-compatible connector |

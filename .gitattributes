@@ -1,0 +1,7 @@
+* text=auto
+
+*.sh text eol=lf
+ai-stack text eol=lf
+docs/install.sh text eol=lf
+
+*.ps1 text eol=crlf

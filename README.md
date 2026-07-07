@@ -107,10 +107,10 @@ $AI_STACK_HOME/
     `-- code-memory/                 cloned or synced project repos for code RAG
 ```
 
-The repository also has local placeholder folders (`models/`, `qdrant/`,
-`open-webui/`, `python-envs/`) with README files, but compose uses named
-container volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and
-memory.
+The repository also has local placeholder folders (`memory/`, `models/`,
+`qdrant/`, `open-webui/`, `python-envs/`) with README files, but compose uses
+named container volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for
+models and memory.
 
 ## Ports
 
@@ -955,7 +955,9 @@ some container data now lives in named volumes.
 ```text
 ai-stack-vm/
 |-- .github/workflows/ci.yml         syntax, Python, and dashboard frontend CI
+|-- .gitattributes                   line-ending rules for scripts
 |-- ai-stack                         CLI helper
+|-- CONTRIBUTING.md                  local checks and repo hygiene
 |-- LICENSE                          MIT license
 |-- SECURITY.md                      security policy and reporting guidance
 |-- docker-compose.yml               main stack
@@ -978,6 +980,8 @@ ai-stack-vm/
 |   |-- dashboard/                  FastAPI dashboard + React/Vite frontend
 |   `-- watcher/
 |-- docs/
+|-- demo/                            fictional memory and sample repos
+|-- memory/                          runtime placeholder only
 |-- models/
 |-- qdrant/
 |-- open-webui/
@@ -991,6 +995,7 @@ ai-stack-vm/
 
 ```text
 models/*          GGUF model files
+memory/*          local memory/runtime content, except memory/README.md
 qdrant/*          local vector database storage, if used
 open-webui/*      local Open WebUI data, if used
 python-envs/*     Python virtual environments
