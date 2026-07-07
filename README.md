@@ -7,6 +7,8 @@ The main entry point is the `./ai-stack` helper. It creates the runtime
 directories, writes local env files, downloads/points at a GGUF model, builds the
 container images, and starts the compose stack.
 
+Full operator and API documentation lives in [`docs/`](docs/README.md).
+
 ## Architecture
 
 ```text
