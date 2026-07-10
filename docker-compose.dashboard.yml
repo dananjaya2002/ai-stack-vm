@@ -40,7 +40,8 @@ services:
       - memory_logs:/logs/memory
       - code_logs:/logs/code
       - agentic_rag_logs:/logs/agentic-rag
-      - ${AI_STACK_HOME}/.env:/config/ai-stack.env
+      # Compose resolves relative bind mounts from this repository directory.
+      - ./.env:/config/ai-stack.env
     restart: unless-stopped
 
   indexer:

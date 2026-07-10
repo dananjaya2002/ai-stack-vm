@@ -111,7 +111,12 @@ app = FastAPI(title="Agentic RAG API")
 install_security_middleware(app, "agentic-rag")
 
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+embedder_started = time.monotonic()
 embedder = SentenceTransformer(EMBED_MODEL_NAME)
+print(
+    f"agentic-rag embedding model loaded in {round(time.monotonic() - embedder_started, 2)} seconds",
+    flush=True,
+)
 
 
 class ChatMessage(BaseModel):
