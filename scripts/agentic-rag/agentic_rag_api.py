@@ -23,6 +23,17 @@ from shared.json_log import append_json_event
 
 SourceName = Literal["code", "memory"]
 
+UTILITY_PROMPT_MARKERS = {
+    "title": ("generate a concise, 3-5 word title", '"title"'),
+    "follow_ups": ("suggest 3-5 relevant follow-up", '"follow_ups"'),
+    "tags": ("generate 1-3 broad tags", '"tags"'),
+}
+UTILITY_PROMPT_RESPONSES = {
+    "title": {"title": "New Chat"},
+    "follow_ups": {"follow_ups": []},
+    "tags": {"tags": ["General"]},
+}
+
 
 def env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
@@ -159,6 +170,18 @@ def latest_user_message(messages: List[ChatMessage]) -> str:
         if message.role == "user":
             return message.content
     return ""
+
+
+def classify_utility_prompt(question: str) -> Optional[str]:
+    normalized = question.lower()
+    for prompt_type, markers in UTILITY_PROMPT_MARKERS.items():
+        if all(marker in normalized for marker in markers):
+            return prompt_type
+    return None
+
+
+def utility_prompt_content(prompt_type: str) -> str:
+    return json.dumps(UTILITY_PROMPT_RESPONSES[prompt_type], ensure_ascii=False)
 
 
 def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -549,15 +572,74 @@ def select_answer_chunks(question: str, chunks: List[Dict[str, Any]]) -> List[Di
     return selected
 
 
+def calculate_evidence_confidence(question: str, chunks: List[Dict[str, Any]]) -> Dict[str, float]:
+    if not chunks:
+        return {
+            "count_score": 0.0,
+            "retrieval_score": 0.0,
+            "coverage_score": 0.0,
+            "deterministic_confidence": 0.0,
+        }
+
+    count_score = min(len(chunks) / 8.0, 1.0)
+    top_scores = sorted(
+        (max(0.0, min(1.0, float(chunk.get("score") or 0.0))) for chunk in chunks),
+        reverse=True,
+    )[:5]
+    retrieval_score = sum(top_scores) / len(top_scores)
+
+    question_tokens = tokenize_for_relevance(question)
+    evidence_tokens: set[str] = set()
+    for chunk in chunks:
+        evidence_tokens.update(
+            tokenize_for_relevance(
+                " ".join(
+                    str(value or "")
+                    for value in [
+                        chunk.get("repo_name"),
+                        chunk.get("file_path"),
+                        chunk.get("symbol_name"),
+                        chunk.get("category"),
+                        chunk.get("language"),
+                        chunk.get("text"),
+                    ]
+                )
+            )
+        )
+    coverage_score = (
+        len(question_tokens & evidence_tokens) / len(question_tokens)
+        if question_tokens else 0.0
+    )
+    deterministic_confidence = (
+        (0.25 * count_score) +
+        (0.35 * retrieval_score) +
+        (0.40 * coverage_score)
+    )
+    return {
+        "count_score": round(count_score, 4),
+        "retrieval_score": round(retrieval_score, 4),
+        "coverage_score": round(coverage_score, 4),
+        "deterministic_confidence": round(deterministic_confidence, 4),
+    }
+
+
 def evaluate_evidence(question: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not ENABLE_AGENTIC_RETRIEVAL:
+        confidence = 0.75 if chunks else 0.0
         return {
             "enough": bool(chunks),
-            "confidence": 0.75 if chunks else 0.0,
+            "confidence": confidence,
             "missing_information": [] if chunks else ["No relevant chunks found"],
             "followup_queries": [],
+            "confidence_components": {
+                "deterministic_confidence": confidence,
+                "evaluator_confidence": None,
+                "evaluator_valid": False,
+                "final_confidence": confidence,
+            },
         }
-    fallback_confidence = min(0.95, 0.35 + (len(chunks) * 0.08))
+    confidence_components = calculate_evidence_confidence(question, chunks)
+    fallback_confidence = confidence_components["deterministic_confidence"]
     fallback = {
         "enough": fallback_confidence >= AGENTIC_MIN_CONFIDENCE,
         "confidence": fallback_confidence,
@@ -578,21 +660,45 @@ Decide whether the evidence is enough to answer.
 Return JSON only:
 {{
   "enough": true,
-  "confidence": 0.0,
+  "confidence": 0.75,
   "missing_information": [],
   "followup_queries": []
 }}
 
+Use 0.0 confidence only when there is no relevant evidence. Judge coverage of the
+specific evidence requested, not merely the number of chunks.
 Use at most {AGENTIC_FOLLOWUP_TOP_K} follow-up queries.
 """
     data = call_llm_json(prompt, fallback)
-    confidence = data.get("confidence", fallback["confidence"])
+    raw_confidence = data.get("confidence", fallback["confidence"])
+    evaluator_valid = True
     try:
-        confidence = float(confidence)
+        evaluator_confidence = float(raw_confidence)
     except (TypeError, ValueError):
-        confidence = fallback["confidence"]
-    data["confidence"] = max(0.0, min(1.0, confidence))
-    data["enough"] = bool(data.get("enough")) and data["confidence"] >= AGENTIC_MIN_CONFIDENCE
+        evaluator_confidence = fallback["confidence"]
+        evaluator_valid = False
+    evaluator_confidence = max(0.0, min(1.0, evaluator_confidence))
+    if chunks and evaluator_confidence == 0.0:
+        evaluator_valid = False
+
+    deterministic_confidence = confidence_components["deterministic_confidence"]
+    if evaluator_valid:
+        final_confidence = (0.60 * deterministic_confidence) + (0.40 * evaluator_confidence)
+    else:
+        final_confidence = deterministic_confidence
+    final_confidence = round(max(0.0, min(1.0, final_confidence)), 4)
+
+    evaluator_enough = bool(data.get("enough"))
+    data["confidence"] = final_confidence
+    data["enough"] = final_confidence >= AGENTIC_MIN_CONFIDENCE and (
+        evaluator_enough or deterministic_confidence >= AGENTIC_MIN_CONFIDENCE
+    )
+    data["confidence_components"] = {
+        **confidence_components,
+        "evaluator_confidence": round(evaluator_confidence, 4),
+        "evaluator_valid": evaluator_valid,
+        "final_confidence": final_confidence,
+    }
     if not isinstance(data.get("followup_queries"), list):
         data["followup_queries"] = []
     if not isinstance(data.get("missing_information"), list):
@@ -631,15 +737,22 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
     queries_used: List[Dict[str, str]] = []
     evaluations: List[Dict[str, Any]] = []
     stop_reason = "max_steps"
+    executed_queries: set[str] = set()
+    retrieval_started = time.monotonic()
 
     current_plan = plan
     for step in range(1, AGENTIC_MAX_STEPS + 1):
+        step_started = time.monotonic()
         step_chunks = []
         for item in current_plan:
             source = item.get("source")
             query = item.get("query") or question
             if source not in {"code", "memory"}:
                 continue
+            query_key = f"{source}:{' '.join(str(query).lower().split())}"
+            if query_key in executed_queries:
+                continue
+            executed_queries.add(query_key)
             query_record = {
                 "step": str(step),
                 "sub_question": item.get("sub_question", query),
@@ -652,8 +765,10 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
 
         before_count = len(all_chunks)
         all_chunks = dedupe_chunks(all_chunks + step_chunks)
+        new_chunk_count = len(all_chunks) - before_count
         evaluation = evaluate_evidence(question, all_chunks)
         evaluations.append(evaluation)
+        components = evaluation.get("confidence_components", {})
 
         log_event(
             "retrieval_step",
@@ -661,10 +776,14 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
                 "question": question,
                 "step": step,
                 "planned_queries": len(current_plan),
-                "new_chunks": len(all_chunks) - before_count,
+                "new_chunks": new_chunk_count,
                 "total_chunks": len(all_chunks),
                 "confidence": evaluation["confidence"],
                 "enough": evaluation["enough"],
+                "confidence_components": components,
+                "query_sources": sorted({item["source"] for item in queries_used if item["step"] == str(step)}),
+                "top_score": max((float(chunk.get("score") or 0.0) for chunk in all_chunks), default=0.0),
+                "elapsed_ms": round((time.monotonic() - step_started) * 1000, 2),
             },
         )
 
@@ -674,7 +793,7 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
         if len(all_chunks) >= AGENTIC_MAX_TOTAL_CHUNKS:
             stop_reason = "max_total_chunks"
             break
-        if len(all_chunks) == before_count and step > 1:
+        if new_chunk_count == 0:
             stop_reason = "no_new_chunks"
             break
 
@@ -693,6 +812,20 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
         ]
 
     final_evaluation = evaluations[-1] if evaluations else {"confidence": 0.0}
+    total_elapsed_ms = round((time.monotonic() - retrieval_started) * 1000, 2)
+    log_event(
+        "retrieval_complete",
+        {
+            "question_hash": hashlib.sha256(question.encode("utf-8")).hexdigest()[:12],
+            "steps": len(evaluations),
+            "queries_used": len(queries_used),
+            "total_chunks": len(all_chunks),
+            "confidence": final_evaluation.get("confidence", 0.0),
+            "confidence_components": final_evaluation.get("confidence_components", {}),
+            "stop_reason": stop_reason,
+            "elapsed_ms": total_elapsed_ms,
+        },
+    )
     return {
         "analysis": analysis,
         "plan": plan,
@@ -700,7 +833,9 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
         "chunks": all_chunks,
         "evaluations": evaluations,
         "confidence": final_evaluation.get("confidence", 0.0),
+        "confidence_components": final_evaluation.get("confidence_components", {}),
         "stop_reason": stop_reason,
+        "elapsed_ms": total_elapsed_ms,
     }
 
 
@@ -852,12 +987,27 @@ def chat_completions(req: ChatCompletionRequest):
     if not user_question:
         return {"error": "No user message found"}
 
+    utility_prompt_type = classify_utility_prompt(user_question)
+    if utility_prompt_type:
+        log_event(
+            "utility_prompt_skipped",
+            {
+                "utility_prompt_type": utility_prompt_type,
+                "question_hash": hashlib.sha256(user_question.encode("utf-8")).hexdigest()[:12],
+            },
+        )
+        return chat_completion_payload(utility_prompt_content(utility_prompt_type))
+
     result = answer_question(
         user_question,
         temperature=req.temperature or 0.2,
         max_tokens=req.max_tokens or 2048,
     )
 
+    return chat_completion_payload(result["answer"])
+
+
+def chat_completion_payload(content: str) -> Dict[str, Any]:
     return {
         "id": f"agentic-rag-{uuid.uuid4()}",
         "object": "chat.completion",
@@ -868,7 +1018,7 @@ def chat_completions(req: ChatCompletionRequest):
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": result["answer"],
+                    "content": content,
                 },
                 "finish_reason": "stop",
             }
