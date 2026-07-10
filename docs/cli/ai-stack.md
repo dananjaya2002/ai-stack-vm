@@ -15,6 +15,7 @@
 ./ai-stack agentic-rag [up|down|status|logs]
 ./ai-stack down
 ./ai-stack restart
+./ai-stack apply-config
 ./ai-stack status
 ./ai-stack smoke [production]
 ./ai-stack qdrant collections
@@ -34,6 +35,8 @@
 - `dashboard` builds/runs the dashboard service.
 - `agentic-rag` is optional and should be started after the main stack.
 - `status` uses `AI_STACK_API_KEY` automatically when it is set in `.env`.
+- `apply-config` recreates the model, proxy, Agentic RAG, and dashboard containers
+  with the current `.env` values without rebuilding images.
 - `smoke` runs end-to-end curl checks for the stack; `smoke production` also
   verifies bearer auth behavior.
 - `qdrant reset ...` commands require typed confirmation before deleting data.

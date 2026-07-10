@@ -32,6 +32,7 @@ Usage:
   ./ai-stack agentic-rag [up|down|status|logs]
   ./ai-stack down
   ./ai-stack restart
+  ./ai-stack apply-config
   ./ai-stack status
   ./ai-stack smoke [production]
   ./ai-stack qdrant collections
@@ -980,6 +981,16 @@ cmd_restart() {
   compose restart "$@"
 }
 
+cmd_apply_config() {
+  cmd_init
+  load_env
+  info "applying .env configuration without rebuilding images"
+  compose up -d --force-recreate vm-llama memory-proxy code-proxy
+  compose -f docker-compose.agentic-rag.yml up -d --force-recreate agentic-rag
+  compose -f docker-compose.dashboard.yml up -d --force-recreate dashboard
+  info "configuration applied; run ./ai-stack status after services finish starting"
+}
+
 cmd_status() {
   load_env
   compose ps
@@ -1515,6 +1526,7 @@ main() {
     agentic-rag) cmd_agentic_rag "$@" ;;
     down) cmd_down "$@" ;;
     restart) cmd_restart "$@" ;;
+    apply-config) cmd_apply_config "$@" ;;
     status) cmd_status "$@" ;;
     smoke) cmd_smoke "$@" ;;
     qdrant) cmd_qdrant "$@" ;;

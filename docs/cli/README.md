@@ -22,6 +22,7 @@ Manual run:
 ./ai-stack build
 ./ai-stack up
 ./ai-stack dashboard
+./ai-stack apply-config
 ./ai-stack status
 ```
 
