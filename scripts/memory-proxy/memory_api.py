@@ -15,9 +15,11 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.json_log import append_json_event
+from shared.utility_prompts import classify_utility_prompt, utility_prompt_content
 
 LOG_FILE = Path(os.getenv("MEMORY_API_LOG_FILE", "/tmp/memory_api.log"))
 ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "true").lower() == "true"
+SKIP_UTILITY_PROMPTS = os.getenv("SKIP_UTILITY_PROMPTS", "true").lower() == "true"
 
 
 # CONFIG
@@ -35,7 +37,7 @@ LLAMA_API = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
 MODEL_NAME = os.getenv("LLM_MODEL", "qwen2.5-coder-7b-instruct-q4_k_m.gguf")
 
 TOP_K = int(os.getenv("MEMORY_TOP_K", "5"))
-SCORE_THRESHOLD = float(os.getenv("MEMORY_SCORE_THRESHOLD", "0.5"))
+SCORE_THRESHOLD = float(os.getenv("MEMORY_SCORE_THRESHOLD", "0.25"))
 
 
 validate_proxy_environment(
@@ -280,6 +282,25 @@ def openai_chat(req: dict):
 
         if not user_msg:
             return {"error": "No user message found"}
+
+        utility_prompt_type = classify_utility_prompt(user_msg) if SKIP_UTILITY_PROMPTS else None
+        if utility_prompt_type:
+            log_event({
+                "type": "utility_prompt_skipped",
+                "utility_prompt_type": utility_prompt_type,
+            })
+            return {
+                "id": "memory-proxy-utility",
+                "object": "chat.completion",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": utility_prompt_content(utility_prompt_type),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
 
         contexts = search_memory(user_msg)
         prompt = build_prompt(user_msg, contexts)

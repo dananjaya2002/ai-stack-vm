@@ -44,6 +44,12 @@ export const dashboardApi = {
     }),
   logs: (source: LogSource) =>
     request<LogsResponse>(`/api/dashboard/logs?source=${encodeURIComponent(source)}`),
+  resetLogs: (source: LogSource) =>
+    request<{ ok: boolean; source: LogSource }>("/api/dashboard/logs/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source }),
+    }),
   setLogCapture: (enabled: boolean) =>
     request<{ ok: boolean; enabled: boolean }>("/api/dashboard/log-capture", {
       method: "POST",
@@ -73,6 +79,14 @@ export const dashboardApi = {
   watcherAction: (scope: Scope, action: "start" | "stop") =>
     request<{ ok: boolean; watcher: unknown }>(`/api/dashboard/watchers/${scope}/${action}`, { method: "POST" }),
   settings: () => request<DashboardSettingsResponse>("/api/dashboard/settings"),
+  updateConfig: (values: Record<string, string>) =>
+    request<{ ok: boolean; restart_required: boolean }>("/api/dashboard/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values }),
+    }),
+  resetConfig: () =>
+    request<{ ok: boolean; restart_required: boolean }>("/api/dashboard/config/reset", { method: "POST" }),
   qdrantCollections: () => request<QdrantCollectionsResponse>("/api/dashboard/qdrant/collections"),
   qdrantReset: (target: "memory" | "code" | "demo", confirmation: string) =>
     request<{ ok: boolean; target: string; warnings?: string[] }>("/api/dashboard/qdrant/reset", {

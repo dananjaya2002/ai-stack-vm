@@ -130,6 +130,7 @@ load_env() {
   DASHBOARD_SESSION_SECRET="${DASHBOARD_SESSION_SECRET:-}"
   ENABLE_RATE_LIMIT="${ENABLE_RATE_LIMIT:-true}"
   RATE_LIMIT_PER_MINUTE="${RATE_LIMIT_PER_MINUTE:-60}"
+  SKIP_UTILITY_PROMPTS="${SKIP_UTILITY_PROMPTS:-true}"
   QDRANT_HOST="${QDRANT_HOST:-qdrant}"
   QDRANT_PORT="${QDRANT_PORT:-6333}"
   MEMORY_COLLECTION="${MEMORY_COLLECTION:-engineering-memory}"
@@ -140,7 +141,7 @@ load_env() {
   MEMORY_API_LOGS="${MEMORY_API_LOGS:-true}"
   MEMORY_API_LOG_FILE="${MEMORY_API_LOG_FILE:-/logs/memory/memory_api.log}"
   MEMORY_TOP_K="${MEMORY_TOP_K:-5}"
-  MEMORY_SCORE_THRESHOLD="${MEMORY_SCORE_THRESHOLD:-0.5}"
+  MEMORY_SCORE_THRESHOLD="${MEMORY_SCORE_THRESHOLD:-0.25}"
   CODE_PROXY_LOGS="${CODE_PROXY_LOGS:-true}"
   CODE_PROXY_LOG_FILE="${CODE_PROXY_LOG_FILE:-/logs/code/code_proxy.log}"
   CODE_TOP_K="${CODE_TOP_K:-8}"
@@ -356,6 +357,7 @@ SECURITY_MODE=development
 AI_STACK_API_KEY=
 ENABLE_RATE_LIMIT=true
 RATE_LIMIT_PER_MINUTE=60
+SKIP_UTILITY_PROMPTS=true
 
 # Dashboard login
 DASHBOARD_AUTH_MODE=auto
@@ -386,7 +388,7 @@ HF_TOKEN=
 MEMORY_API_LOGS=true
 MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
 MEMORY_TOP_K=5
-MEMORY_SCORE_THRESHOLD=0.5
+MEMORY_SCORE_THRESHOLD=0.25
 
 # Code proxy
 CODE_PROXY_LOGS=true
@@ -436,6 +438,7 @@ ensure_root_env_defaults() {
   ensure_env_var DASHBOARD_SESSION_SECRET ""
   ensure_env_var ENABLE_RATE_LIMIT true
   ensure_env_var RATE_LIMIT_PER_MINUTE 60
+  ensure_env_var SKIP_UTILITY_PROMPTS true
   ensure_env_var QDRANT_HOST qdrant
   ensure_env_var QDRANT_PORT 6333
   ensure_env_var MEMORY_COLLECTION engineering-memory
@@ -446,7 +449,7 @@ ensure_root_env_defaults() {
   ensure_env_var MEMORY_API_LOGS true
   ensure_env_var MEMORY_API_LOG_FILE /logs/memory/memory_api.log
   ensure_env_var MEMORY_TOP_K 5
-  ensure_env_var MEMORY_SCORE_THRESHOLD 0.5
+  ensure_env_var MEMORY_SCORE_THRESHOLD 0.25
   ensure_env_var CODE_PROXY_LOGS true
   ensure_env_var CODE_PROXY_LOG_FILE /logs/code/code_proxy.log
   ensure_env_var CODE_TOP_K 8

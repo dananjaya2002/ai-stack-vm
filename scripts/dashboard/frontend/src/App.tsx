@@ -40,7 +40,7 @@ const tabs: Array<{ id: TabId; label: string; title: string; subtitle: string }>
   { id: "overview", label: "Overview", title: "Overview", subtitle: "Service health, storage, and system load." },
   { id: "logs", label: "Logs", title: "Logs", subtitle: "Proxy logs plus dashboard job and watcher output." },
   { id: "files", label: "Files", title: "File Browser", subtitle: "Browse memory files and code repository folders." },
-  { id: "upload", label: "Upload", title: "Upload", subtitle: "Add files to engineering or code memory." },
+  { id: "upload", label: "Upload", title: "Upload", subtitle: "Add files to document or code memory." },
   { id: "repos", label: "Repositories", title: "Repositories", subtitle: "Clone, update, and browse code repositories." },
   { id: "indexing", label: "Indexing", title: "Indexing", subtitle: "Run full or targeted indexing jobs." },
   { id: "watchers", label: "Watchers", title: "Watchers", subtitle: "Start and stop automatic reindex watchers." },
@@ -237,6 +237,14 @@ function App() {
     const data = await dashboardApi.logs(logSource);
     setLogs(data);
     markUpdated();
+  }
+
+  async function resetLogs() {
+    if (!window.confirm(`Reset all visible ${logSource} logs?`)) return;
+    await run("logs-reset", async () => {
+      await dashboardApi.resetLogs(logSource);
+      await Promise.all([refreshLogs(), refreshStatus()]);
+    }, `${logSource} logs reset.`);
   }
 
   async function refreshFiles(scope = fileScope, path = filePath) {
@@ -445,6 +453,21 @@ function App() {
     }
   }
 
+  async function saveConfiguration(values: Record<string, string>) {
+    await run("config-save", async () => {
+      await dashboardApi.updateConfig(values);
+      await refreshSettings();
+    }, "Configuration saved. Recreate the affected containers to apply it.");
+  }
+
+  async function resetConfiguration() {
+    if (!window.confirm("Reset all dashboard-managed variables to their defaults?")) return;
+    await run("config-reset", async () => {
+      await dashboardApi.resetConfig();
+      await refreshSettings();
+    }, "Configuration reset to defaults. Recreate the affected containers to apply it.");
+  }
+
   return (
     <div className="min-h-screen bg-[#eef4f8] text-ink">
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
@@ -516,6 +539,7 @@ function App() {
               logCapture={logCapture}
               setLogCapture={changeLogCapture}
               refresh={() => run("logs", refreshLogs)}
+              reset={resetLogs}
             />
           )}
           {activeTab === "files" && (
@@ -553,7 +577,14 @@ function App() {
           {activeTab === "indexing" && <IndexingTab onSubmit={startIndex} jobs={jobs} refresh={() => run("jobs", refreshJobs)} busy={busy === "index"} />}
           {activeTab === "watchers" && <WatchersTab watchers={watchers} action={watcherAction} />}
           {activeTab === "qdrant" && <QdrantTab qdrant={qdrant} refresh={() => run("qdrant", refreshQdrant)} reset={resetQdrant} />}
-          {activeTab === "settings" && <SettingsTab settings={settings} refresh={() => run("settings", refreshSettings)} />}
+          {activeTab === "settings" && (
+            <SettingsTab
+              settings={settings}
+              refresh={() => run("settings", refreshSettings)}
+              save={saveConfiguration}
+              reset={resetConfiguration}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -625,7 +656,7 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
       ],
     },
     {
-      title: "Engineering Memory",
+      title: "Document Memory",
       ok: status?.memories.engineering.ok,
       rows: [
         ["Files", status?.memories.engineering.file_count ?? "-"],
@@ -713,7 +744,7 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
             <XAxis dataKey="time" hide />
             <YAxis width={42} />
             <Tooltip />
-            <Bar dataKey="engineeringFiles" name="Engineering" fill="#2563eb" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="engineeringFiles" name="Documents" fill="#2563eb" radius={[6, 6, 0, 0]} />
             <Bar dataKey="codeFiles" name="Code" fill="#138a54" radius={[6, 6, 0, 0]} />
           </BarChart>
         </ChartPanel>
@@ -743,6 +774,7 @@ function LogsTab({
   logCapture,
   setLogCapture,
   refresh,
+  reset,
 }: {
   source: LogSource;
   setSource: (source: LogSource) => void;
@@ -751,6 +783,7 @@ function LogsTab({
   logCapture: boolean;
   setLogCapture: (enabled: boolean) => void;
   refresh: () => void;
+  reset: () => void;
 }) {
   return (
     <Panel>
@@ -763,6 +796,7 @@ function LogsTab({
           ))}
         </select>
         <Button onClick={refresh}>Refresh</Button>
+        <Button variant="danger" onClick={reset}>Reset logs</Button>
         <label className="flex items-center gap-2 text-sm font-bold">
           <input type="checkbox" checked={logCapture} onChange={(event) => setLogCapture(event.target.checked)} />
           Temporary log capture
@@ -925,7 +959,7 @@ function FilesTab({
       <div className="mb-4 grid gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <select value={scope} onChange={(event) => setScope(event.target.value as Scope)} className="control max-w-xs">
-            <option value="engineering">Engineering memory</option>
+            <option value="engineering">Document memory</option>
             <option value="code">Code repositories</option>
           </select>
           <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px] max-w-sm" type="search" placeholder="Filter current directory" />
@@ -945,7 +979,7 @@ function UploadTab({ onSubmit, result, busy }: { onSubmit: (event: FormEvent<HTM
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Field label="Destination">
             <select name="scope" className="control">
-              <option value="engineering">Engineering memory</option>
+              <option value="engineering">Document memory</option>
               <option value="code">Code memory</option>
             </select>
           </Field>
@@ -1037,7 +1071,7 @@ function IndexingTab({
         <form className="grid gap-4 md:grid-cols-[220px_1fr_auto]" onSubmit={onSubmit}>
           <Field label="Scope">
             <select name="scope" className="control">
-              <option value="engineering">Engineering memory</option>
+              <option value="engineering">Document memory</option>
               <option value="code">Code memory</option>
             </select>
           </Field>
@@ -1100,7 +1134,7 @@ function WatchersTab({
         return (
           <Panel key={scope}>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-lg font-black capitalize">{scope} watcher</h3>
+              <h3 className="text-lg font-black">{scope === "engineering" ? "Document" : "Code"} watcher</h3>
               <StatusBadge ok={watcher.running} warning={!watcher.running} label={watcher.running ? "RUNNING" : "STOPPED"} />
             </div>
             <div className="mb-4 flex gap-3">
@@ -1167,11 +1201,79 @@ function QdrantTab({
   );
 }
 
-function SettingsTab({ settings, refresh }: { settings: DashboardSettingsResponse | null; refresh: () => void }) {
+function SettingsTab({
+  settings,
+  refresh,
+  save,
+  reset,
+}: {
+  settings: DashboardSettingsResponse | null;
+  refresh: () => void;
+  save: (values: Record<string, string>) => void;
+  reset: () => void;
+}) {
   const rows = Object.entries(settings?.settings || {}).filter(([, value]) => value !== "");
   const paths = Object.entries(settings?.paths || {});
+  const [values, setValues] = useState<Record<string, string>>({});
+  const definitions = settings?.configuration?.definitions || {};
+
+  useEffect(() => {
+    setValues(settings?.configuration?.values || {});
+  }, [settings]);
+
+  const groups = Object.entries(definitions).reduce<Record<string, string[]>>((result, [name, definition]) => {
+    (result[definition.group] ||= []).push(name);
+    return result;
+  }, {});
+
   return (
-    <div className="grid gap-5 xl:grid-cols-2">
+    <div className="grid gap-5">
+      <Panel>
+        <form className="grid gap-5" onSubmit={(event) => { event.preventDefault(); save(values); }}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-black">Editable Configuration</h3>
+              <p className="mt-1 text-sm text-muted">Changes are written to .env and require container recreation.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={!settings?.configuration?.env_file_available}>Save configuration</Button>
+              <Button type="button" variant="danger" onClick={reset} disabled={!settings?.configuration?.env_file_available}>Reset to defaults</Button>
+            </div>
+          </div>
+          {!settings?.configuration?.env_file_available && (
+            <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm font-bold text-bad">The host .env file is not mounted. Recreate the dashboard with the updated Compose configuration.</div>
+          )}
+          {Object.entries(groups).map(([group, names]) => (
+            <fieldset key={group} className="grid gap-3 rounded-lg border border-line p-4 md:grid-cols-2 xl:grid-cols-3">
+              <legend className="px-2 text-sm font-black">{group}</legend>
+              {names.map((name) => {
+                const definition = definitions[name];
+                return (
+                  <Field key={name} label={name}>
+                    {definition.type === "boolean" ? (
+                      <select className="control" value={values[name] || definition.default} onChange={(event) => setValues({ ...values, [name]: event.target.value })}>
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    ) : (
+                      <input
+                        className="control"
+                        type="number"
+                        step={definition.type === "integer" ? 1 : "any"}
+                        min={definition.min}
+                        max={definition.max}
+                        value={values[name] || definition.default}
+                        onChange={(event) => setValues({ ...values, [name]: event.target.value })}
+                      />
+                    )}
+                  </Field>
+                );
+              })}
+            </fieldset>
+          ))}
+        </form>
+      </Panel>
+      <div className="grid gap-5 xl:grid-cols-2">
       <Panel>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h3 className="text-base font-black">Runtime Settings</h3>
@@ -1183,6 +1285,7 @@ function SettingsTab({ settings, refresh }: { settings: DashboardSettingsRespons
         <h3 className="mb-4 text-base font-black">Mounted Paths</h3>
         <KeyValueTable rows={paths} />
       </Panel>
+      </div>
     </div>
   );
 }

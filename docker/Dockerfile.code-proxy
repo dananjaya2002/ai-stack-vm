@@ -17,6 +17,7 @@ ENV OMP_NUM_THREADS=4 \
 COPY --chown=appuser:appuser scripts/code-proxy/code_proxy.py ./code_proxy.py
 COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
 COPY --chown=appuser:appuser scripts/shared/json_log.py ./shared/json_log.py
+COPY --chown=appuser:appuser scripts/shared/utility_prompts.py ./shared/utility_prompts.py
 
 # Seed the named volume with a directory writable by the non-root proxy user.
 RUN mkdir -p /logs/code && chown -R appuser:appuser /logs/code

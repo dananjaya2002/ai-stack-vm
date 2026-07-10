@@ -17,6 +17,7 @@ from functools import lru_cache
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.json_log import append_json_event
+from shared.utility_prompts import classify_utility_prompt, utility_prompt_content
 
 
 app = FastAPI(title="Code Proxy API")
@@ -38,6 +39,7 @@ CODE_SCORE_THRESHOLD = float(os.getenv("CODE_SCORE_THRESHOLD", "0.35"))
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
 
 ENABLE_LOGGING = os.getenv("CODE_PROXY_LOGS", "false").lower() == "true"
+SKIP_UTILITY_PROMPTS = os.getenv("SKIP_UTILITY_PROMPTS", "true").lower() == "true"
 LOG_FILE = Path(os.getenv("CODE_PROXY_LOG_FILE", "/tmp/code_proxy.log"))
 
 SEARCH_LIMIT_MULTIPLIER = int(os.getenv("SEARCH_LIMIT_MULTIPLIER", "5"))
@@ -456,6 +458,21 @@ def ask(req: AskRequest):
 @app.post("/v1/chat/completions")
 def chat_completions(req: ChatCompletionRequest):
     user_question = latest_user_message(req.messages)
+    utility_prompt_type = classify_utility_prompt(user_question) if SKIP_UTILITY_PROMPTS else None
+    if utility_prompt_type:
+        log_event("utility_prompt_skipped", {"utility_prompt_type": utility_prompt_type})
+        return {
+            "id": "code-proxy-utility",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "code-proxy",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": utility_prompt_content(utility_prompt_type)},
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
 
     chunks = search_code(user_question)
     context = build_code_context(chunks)

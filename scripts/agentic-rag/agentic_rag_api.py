@@ -19,21 +19,10 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.config_loader import default_config_path, load_json_object, require_string_sets
 from shared.json_log import append_json_event
+from shared.utility_prompts import classify_utility_prompt, utility_prompt_content
 
 
 SourceName = Literal["code", "memory"]
-
-UTILITY_PROMPT_MARKERS = {
-    "title": ("generate a concise, 3-5 word title", '"title"'),
-    "follow_ups": ("suggest 3-5 relevant follow-up", '"follow_ups"'),
-    "tags": ("generate 1-3 broad tags", '"tags"'),
-}
-UTILITY_PROMPT_RESPONSES = {
-    "title": {"title": "New Chat"},
-    "follow_ups": {"follow_ups": []},
-    "tags": {"tags": ["General"]},
-}
-
 
 def env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
@@ -64,6 +53,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5-coder-7b-instruct-q4_k_m.gguf")
 
 ENABLE_INDEX_V2 = env_bool("ENABLE_INDEX_V2", "true")
 ENABLE_AGENTIC_RETRIEVAL = env_bool("ENABLE_AGENTIC_RETRIEVAL", "true")
+SKIP_UTILITY_PROMPTS = env_bool("SKIP_UTILITY_PROMPTS", "true")
 AGENTIC_MAX_STEPS = env_int("AGENTIC_MAX_STEPS", "4")
 AGENTIC_INITIAL_SUBQUERIES = env_int("AGENTIC_INITIAL_SUBQUERIES", "3")
 AGENTIC_FOLLOWUP_TOP_K = env_int("AGENTIC_FOLLOWUP_TOP_K", "4")
@@ -172,18 +162,6 @@ def latest_user_message(messages: List[ChatMessage]) -> str:
     return ""
 
 
-def classify_utility_prompt(question: str) -> Optional[str]:
-    normalized = question.lower()
-    for prompt_type, markers in UTILITY_PROMPT_MARKERS.items():
-        if all(marker in normalized for marker in markers):
-            return prompt_type
-    return None
-
-
-def utility_prompt_content(prompt_type: str) -> str:
-    return json.dumps(UTILITY_PROMPT_RESPONSES[prompt_type], ensure_ascii=False)
-
-
 def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     text = text.strip()
     if not text:
@@ -274,6 +252,11 @@ def heuristic_sources(question: str) -> List[SourceName]:
     return ["code", "memory"]
 
 
+def is_exhaustive_question(question: str) -> bool:
+    normalized = question.lower()
+    return bool(re.search(r"\b(all|every)\b|\bcomplete list\b|\bcurrently available\b", normalized))
+
+
 def fallback_analysis(question: str) -> Dict[str, Any]:
     words = question.split()
     is_complex = len(words) > 18 or any(token in question.lower() for token in ["compare", "how", "why", "and", "across"])
@@ -285,6 +268,7 @@ def fallback_analysis(question: str) -> Dict[str, Any]:
         "main_topics": words[:8],
         "expected_evidence": ["implementation details", "documentation notes"],
         "sources": sources,
+        "exhaustive": is_exhaustive_question(question),
     }
 
 
@@ -760,7 +744,10 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
                 "source": source,
             }
             queries_used.append(query_record)
-            top_k = AGENTIC_TOP_K_PER_QUERY if step == 1 else AGENTIC_FOLLOWUP_TOP_K
+            if step == 1 and is_exhaustive_question(question):
+                top_k = min(AGENTIC_MAX_TOTAL_CHUNKS, max(8, AGENTIC_TOP_K_PER_QUERY))
+            else:
+                top_k = AGENTIC_TOP_K_PER_QUERY if step == 1 else AGENTIC_FOLLOWUP_TOP_K
             step_chunks.extend(search_source(query, source, top_k))
 
         before_count = len(all_chunks)
@@ -798,6 +785,8 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
             break
 
         followups = [str(query).strip() for query in evaluation.get("followup_queries", []) if str(query).strip()]
+        if not followups and is_exhaustive_question(question):
+            followups = [f"{question} complete list definitions aliases functions commands"]
         if not followups:
             stop_reason = "no_followup_queries"
             break
@@ -987,7 +976,7 @@ def chat_completions(req: ChatCompletionRequest):
     if not user_question:
         return {"error": "No user message found"}
 
-    utility_prompt_type = classify_utility_prompt(user_question)
+    utility_prompt_type = classify_utility_prompt(user_question) if SKIP_UTILITY_PROMPTS else None
     if utility_prompt_type:
         log_event(
             "utility_prompt_skipped",

@@ -46,6 +46,38 @@ MEMORY_LOG_ENABLED = os.getenv("MEMORY_LOG_ENABLED", "true").lower() == "true"
 CODE_LOG_ENABLED = os.getenv("CODE_LOG_ENABLED", "true").lower() == "true"
 AGENTIC_RAG_LOG_ENABLED = os.getenv("AGENTIC_RAG_LOG_ENABLED", "true").lower() == "true"
 DASHBOARD_LOG_DIR = Path(os.getenv("DASHBOARD_LOG_DIR", "/tmp/ai-stack-dashboard"))
+AI_STACK_ENV_FILE = Path(os.getenv("AI_STACK_ENV_FILE", "/config/ai-stack.env"))
+
+CONFIG_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "SKIP_UTILITY_PROMPTS": {"group": "General", "type": "boolean", "default": "true"},
+    "ENABLE_RATE_LIMIT": {"group": "General", "type": "boolean", "default": "true"},
+    "RATE_LIMIT_PER_MINUTE": {"group": "General", "type": "integer", "default": "60", "min": 1, "max": 10000},
+    "LLAMA_CONTEXT": {"group": "Model", "type": "integer", "default": "8192", "min": 512, "max": 131072},
+    "LLAMA_THREADS": {"group": "Model", "type": "integer", "default": "6", "min": 1, "max": 256},
+    "LLAMA_BATCH": {"group": "Model", "type": "integer", "default": "512", "min": 1, "max": 8192},
+    "LLAMA_UBATCH": {"group": "Model", "type": "integer", "default": "256", "min": 1, "max": 8192},
+    "MEMORY_API_LOGS": {"group": "Document Memory", "type": "boolean", "default": "true"},
+    "MEMORY_TOP_K": {"group": "Document Memory", "type": "integer", "default": "5", "min": 1, "max": 50},
+    "MEMORY_SCORE_THRESHOLD": {"group": "Document Memory", "type": "number", "default": "0.25", "min": 0, "max": 1},
+    "CODE_PROXY_LOGS": {"group": "Code Memory", "type": "boolean", "default": "true"},
+    "CODE_TOP_K": {"group": "Code Memory", "type": "integer", "default": "8", "min": 1, "max": 50},
+    "CODE_SCORE_THRESHOLD": {"group": "Code Memory", "type": "number", "default": "0.25", "min": 0, "max": 1},
+    "MAX_CHUNKS_PER_FILE": {"group": "Code Memory", "type": "integer", "default": "2", "min": 1, "max": 20},
+    "SEARCH_LIMIT_MULTIPLIER": {"group": "Code Memory", "type": "integer", "default": "4", "min": 1, "max": 20},
+    "AGENTIC_RAG_LOGS": {"group": "Agentic RAG", "type": "boolean", "default": "true"},
+    "ENABLE_INDEX_V2": {"group": "Agentic RAG", "type": "boolean", "default": "true"},
+    "ENABLE_AGENTIC_RETRIEVAL": {"group": "Agentic RAG", "type": "boolean", "default": "true"},
+    "AGENTIC_MAX_STEPS": {"group": "Agentic RAG", "type": "integer", "default": "4", "min": 1, "max": 12},
+    "AGENTIC_INITIAL_SUBQUERIES": {"group": "Agentic RAG", "type": "integer", "default": "3", "min": 1, "max": 12},
+    "AGENTIC_FOLLOWUP_TOP_K": {"group": "Agentic RAG", "type": "integer", "default": "4", "min": 1, "max": 50},
+    "AGENTIC_MAX_TOTAL_CHUNKS": {"group": "Agentic RAG", "type": "integer", "default": "16", "min": 1, "max": 100},
+    "AGENTIC_MIN_CONFIDENCE": {"group": "Agentic RAG", "type": "number", "default": "0.70", "min": 0, "max": 1},
+    "AGENTIC_TOP_K_PER_QUERY": {"group": "Agentic RAG", "type": "integer", "default": "3", "min": 1, "max": 50},
+    "SIMPLE_TOP_K": {"group": "Agentic RAG", "type": "integer", "default": "6", "min": 1, "max": 50},
+    "AGENTIC_SCORE_THRESHOLD": {"group": "Agentic RAG", "type": "number", "default": "0.20", "min": 0, "max": 1},
+    "MAX_CHUNK_CHARS": {"group": "Agentic RAG", "type": "integer", "default": "4000", "min": 100, "max": 50000},
+    "MAX_CONTEXT_CHARS": {"group": "Agentic RAG", "type": "integer", "default": "50000", "min": 1000, "max": 500000},
+}
 
 INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
 INDEX_CODE_SCRIPT = Path(os.getenv("INDEX_CODE_SCRIPT", "/app/watcher/index_code.py"))
@@ -91,6 +123,14 @@ class IndexRequest(BaseModel):
 
 class LogCaptureRequest(BaseModel):
     enabled: bool
+
+
+class LogResetRequest(BaseModel):
+    source: str
+
+
+class ConfigUpdateRequest(BaseModel):
+    values: Dict[str, str]
 
 
 class DeleteFileRequest(BaseModel):
@@ -367,6 +407,77 @@ def non_secret_settings() -> Dict[str, Any]:
         "AGENTIC_MIN_CONFIDENCE",
     ]
     return {name: os.getenv(name, "") for name in names}
+
+
+def read_env_values() -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if not AI_STACK_ENV_FILE.exists():
+        return values
+    for raw_line in AI_STACK_ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        values[name.strip()] = value.strip()
+    return values
+
+
+def validate_config_value(name: str, raw_value: str) -> str:
+    definition = CONFIG_DEFINITIONS.get(name)
+    if not definition:
+        raise HTTPException(status_code=400, detail=f"Unsupported configuration variable: {name}")
+    value = str(raw_value).strip()
+    value_type = definition["type"]
+    if value_type == "boolean":
+        normalized = value.lower()
+        if normalized not in {"true", "false"}:
+            raise HTTPException(status_code=400, detail=f"{name} must be true or false.")
+        return normalized
+    try:
+        parsed = int(value) if value_type == "integer" else float(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{name} must be a valid {value_type}.") from exc
+    if parsed < definition["min"] or parsed > definition["max"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} must be between {definition['min']} and {definition['max']}.",
+        )
+    return str(parsed)
+
+
+def write_env_values(updates: Dict[str, str]) -> None:
+    if not AI_STACK_ENV_FILE.exists() or not AI_STACK_ENV_FILE.is_file():
+        raise HTTPException(status_code=503, detail="The host .env file is not mounted into the dashboard.")
+    normalized = {name: validate_config_value(name, value) for name, value in updates.items()}
+    lines = AI_STACK_ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    found = set()
+    output = []
+    for line in lines:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=", line)
+        name = match.group(1) if match else None
+        if name in normalized:
+            output.append(f"{name}={normalized[name]}")
+            found.add(name)
+        else:
+            output.append(line)
+    if normalized.keys() - found:
+        output.extend(["", "# Dashboard-managed configuration"])
+        output.extend(f"{name}={normalized[name]}" for name in normalized if name not in found)
+    AI_STACK_ENV_FILE.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+
+def editable_config_payload() -> Dict[str, Any]:
+    env_values = read_env_values()
+    values = {
+        name: env_values.get(name, os.getenv(name, definition["default"]))
+        for name, definition in CONFIG_DEFINITIONS.items()
+    }
+    return {
+        "values": values,
+        "definitions": CONFIG_DEFINITIONS,
+        "env_file_available": AI_STACK_ENV_FILE.is_file(),
+        "restart_required": True,
+    }
 
 
 def qdrant_request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -902,8 +1013,9 @@ def dashboard_settings() -> Dict[str, Any]:
     return {
         "ok": True,
         "settings": non_secret_settings(),
+        "configuration": editable_config_payload(),
         "paths": {
-            "engineering_memory": str(ENGINEERING_MEMORY_DIR),
+            "document_memory": str(ENGINEERING_MEMORY_DIR),
             "code_memory": str(CODE_MEMORY_DIR),
             "memory_log": str(MEMORY_LOG),
             "code_log": str(CODE_LOG),
@@ -911,6 +1023,18 @@ def dashboard_settings() -> Dict[str, Any]:
             "dashboard_log_dir": str(DASHBOARD_LOG_DIR),
         },
     }
+
+
+@app.put("/api/dashboard/config")
+def update_dashboard_config(req: ConfigUpdateRequest) -> Dict[str, Any]:
+    write_env_values(req.values)
+    return {"ok": True, "configuration": editable_config_payload(), "restart_required": True}
+
+
+@app.post("/api/dashboard/config/reset")
+def reset_dashboard_config() -> Dict[str, Any]:
+    write_env_values({name: definition["default"] for name, definition in CONFIG_DEFINITIONS.items()})
+    return {"ok": True, "configuration": editable_config_payload(), "restart_required": True}
 
 
 @app.get("/api/dashboard/qdrant/collections")
@@ -996,6 +1120,36 @@ def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
         status_code=400,
         detail="source must be memory, code, agentic-rag, dashboard, or watchers",
     )
+
+
+@app.post("/api/dashboard/logs/reset")
+def reset_dashboard_logs(req: LogResetRequest) -> Dict[str, Any]:
+    file_sources = {
+        "memory": MEMORY_LOG,
+        "code": CODE_LOG,
+        "agentic-rag": AGENTIC_RAG_LOG,
+    }
+    if req.source in file_sources:
+        path = file_sources[req.source]
+        if not path.exists():
+            raise HTTPException(status_code=409, detail=f"The {req.source} log file does not exist.")
+        try:
+            path.write_text("", encoding="utf-8")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not reset {req.source} log: {exc}") from exc
+    elif req.source == "dashboard":
+        with JOBS_LOCK:
+            JOBS.clear()
+    elif req.source == "watchers":
+        with WATCHERS_LOCK:
+            for watcher in WATCHERS.values():
+                watcher["output"] = []
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="source must be memory, code, agentic-rag, dashboard, or watchers",
+        )
+    return {"ok": True, "source": req.source}
 
 
 @app.post("/api/dashboard/log-capture")

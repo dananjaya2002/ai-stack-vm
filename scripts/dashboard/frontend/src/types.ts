@@ -132,6 +132,18 @@ export interface DashboardSettingsResponse {
   ok: boolean;
   settings: Record<string, string>;
   paths: Record<string, string>;
+  configuration: {
+    values: Record<string, string>;
+    definitions: Record<string, {
+      group: string;
+      type: "boolean" | "integer" | "number";
+      default: string;
+      min?: number;
+      max?: number;
+    }>;
+    env_file_available: boolean;
+    restart_required: boolean;
+  };
 }
 
 export interface QdrantCollection {

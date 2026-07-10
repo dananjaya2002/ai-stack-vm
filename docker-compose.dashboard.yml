@@ -31,6 +31,7 @@ services:
       DASHBOARD_ADMIN_USERNAME: ${DASHBOARD_ADMIN_USERNAME:-admin}
       DASHBOARD_ADMIN_PASSWORD_HASH: ${DASHBOARD_ADMIN_PASSWORD_HASH:-}
       DASHBOARD_SESSION_SECRET: ${DASHBOARD_SESSION_SECRET:-}
+      AI_STACK_ENV_FILE: /config/ai-stack.env
     ports:
       - "${DASHBOARD_BIND_HOST:-0.0.0.0}:9100:9100"
     volumes:
@@ -39,6 +40,7 @@ services:
       - memory_logs:/logs/memory
       - code_logs:/logs/code
       - agentic_rag_logs:/logs/agentic-rag
+      - ${AI_STACK_HOME}/.env:/config/ai-stack.env
     restart: unless-stopped
 
   indexer:

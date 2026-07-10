@@ -20,7 +20,10 @@ dashboard session cookie.
 GET  /api/dashboard/status
 GET  /api/dashboard/settings
 GET  /api/dashboard/logs?source=dashboard|watchers|memory|code|agentic-rag
+POST /api/dashboard/logs/reset
 POST /api/dashboard/log-capture
+PUT  /api/dashboard/config
+POST /api/dashboard/config/reset
 ```
 
 `/api/dashboard/status` checks llama.cpp, Qdrant, memory folders, system usage,
