@@ -653,8 +653,8 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
       ok: Boolean(status?.logs.memory.ok && status?.logs.code.ok),
       warning: true,
       rows: [
-        ["Memory log", status?.logs.memory.exists ? "present" : "missing"],
-        ["Code log", status?.logs.code.exists ? "present" : "missing"],
+        ["Memory log", formatLogState(status?.logs.memory.state)],
+        ["Code log", formatLogState(status?.logs.code.state)],
       ],
     },
   ];
@@ -768,10 +768,26 @@ function LogsTab({
         <span className="text-sm text-muted">Auto-refreshes every 2 seconds.</span>
       </div>
       <pre ref={logRef} className="log-box">
-        {(logs?.lines || []).join("\n") || logs?.error || ""}
+        {(logs?.lines || []).join("\n") || logs?.error || logs?.message || logEmptyMessage(logs)}
       </pre>
     </Panel>
   );
+}
+
+function formatLogState(state?: LogsResponse["state"]): string {
+  if (state === "available") return "available";
+  if (state === "disabled") return "logging disabled";
+  if (state === "empty") return "no events yet";
+  if (state === "unavailable") return "log unavailable";
+  return "unknown";
+}
+
+function logEmptyMessage(logs: LogsResponse | null): string {
+  if (!logs) return "Loading logs…";
+  if (logs.state === "disabled") return "Logging is disabled for this source.";
+  if (logs.state === "empty") return "No events have been logged yet.";
+  if (logs.state === "unavailable") return "The configured log file is unavailable.";
+  return "";
 }
 
 function parentPath(path: string) {

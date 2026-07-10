@@ -33,6 +33,43 @@ source .env
 curl -i -H "Authorization: Bearer $AI_STACK_API_KEY" http://localhost:9002/v1/models
 ```
 
+## Dashboard Shows Missing Memory Or Code Logs
+
+The dashboard reads structured proxy event files from shared Docker volumes.
+These are separate from container stdout, which remains available through:
+
+```bash
+./ai-stack logs memory
+./ai-stack logs code
+```
+
+File logging is enabled by default for both proxies. Check `.env` if the
+dashboard reports `logging disabled`:
+
+```env
+MEMORY_API_LOGS=true
+MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
+CODE_PROXY_LOGS=true
+CODE_PROXY_LOG_FILE=/logs/code/code_proxy.log
+```
+
+Each proxy creates its log and writes a startup event. After changing `.env`,
+restart the main stack and dashboard so both receive the new settings:
+
+```bash
+./ai-stack restart
+./ai-stack dashboard
+```
+
+`no events yet` means the file is readable but empty. `log unavailable` means
+logging is enabled but the configured file cannot be found or read; check the
+proxy container logs and the `memory_logs` or `code_logs` Compose volume.
+
+Dashboard job and watcher output is temporary. It is kept in memory for live
+viewing and is cleared whenever the dashboard container restarts. The `*.log`
+entry in `scripts/config/code_watch.json` intentionally prevents log writes
+from triggering code re-indexing; it does not disable proxy logs.
+
 ## Duplicate Dashboard Containers
 
 The dashboard compose file includes an `indexer` helper. It should not stay

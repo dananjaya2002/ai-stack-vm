@@ -33,3 +33,6 @@ open-webui/*
 # Frontend build/dependencies
 node_modules/
 dist/
+
+#agent files
+agents.md

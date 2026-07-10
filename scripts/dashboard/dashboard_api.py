@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import zipfile
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,6 +24,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from shared.log_status import log_stats as classify_log_stats, read_last_lines as read_log_lines
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
@@ -38,6 +41,8 @@ ENGINEERING_MEMORY_DIR = Path(os.getenv("ENGINEERING_MEMORY_DIR", "/memory/engin
 CODE_MEMORY_DIR = Path(os.getenv("CODE_MEMORY_DIR", "/memory/code-memory"))
 MEMORY_LOG = Path(os.getenv("MEMORY_LOG", "/logs/memory/memory_api.log"))
 CODE_LOG = Path(os.getenv("CODE_LOG", "/logs/code/code_proxy.log"))
+MEMORY_LOG_ENABLED = os.getenv("MEMORY_LOG_ENABLED", "true").lower() == "true"
+CODE_LOG_ENABLED = os.getenv("CODE_LOG_ENABLED", "true").lower() == "true"
 DASHBOARD_LOG_DIR = Path(os.getenv("DASHBOARD_LOG_DIR", "/tmp/ai-stack-dashboard"))
 
 INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
@@ -454,30 +459,8 @@ def memory_stats(path: Path) -> Dict[str, Any]:
     }
 
 
-def log_stats(path: Path) -> Dict[str, Any]:
-    if not path.exists():
-        return {
-            "ok": False,
-            "warning": True,
-            "error": "Log file does not exist.",
-            "path": str(path),
-            "exists": False,
-            "size_bytes": 0,
-            "latest_modified_time": None,
-        }
-    try:
-        stat = path.stat()
-        return {
-            "ok": True,
-            "warning": False,
-            "error": None,
-            "path": str(path),
-            "exists": True,
-            "size_bytes": stat.st_size,
-            "latest_modified_time": iso_time(stat.st_mtime),
-        }
-    except Exception as exc:
-        return error_payload(str(exc), path=str(path), exists=True, size_bytes=None, latest_modified_time=None)
+def log_stats(path: Path, enabled: bool = True) -> Dict[str, Any]:
+    return classify_log_stats(path, enabled)
 
 
 def system_stats() -> Dict[str, Any]:
@@ -621,14 +604,10 @@ def list_directory(scope: str, raw_path: Optional[str]) -> Dict[str, Any]:
     }
 
 
-def read_last_lines(path: Path, max_lines: int = MAX_LOG_LINES) -> Dict[str, Any]:
-    if not path.exists():
-        return {"ok": False, "error": "Log file does not exist.", "path": str(path), "lines": []}
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return {"ok": True, "error": None, "path": str(path), "lines": lines[-max_lines:]}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc), "path": str(path), "lines": []}
+def read_last_lines(
+    path: Path, source: str, enabled: bool = True, max_lines: int = MAX_LOG_LINES
+) -> Dict[str, Any]:
+    return read_log_lines(path, source, enabled, max_lines)
 
 
 def redact(text: str, secrets: Optional[List[str]] = None) -> str:
@@ -895,7 +874,10 @@ def dashboard_status() -> Dict[str, Any]:
     llama = check_llama()
     qdrant = check_qdrant()
     memories = {"engineering": memory_stats(ENGINEERING_MEMORY_DIR), "code": memory_stats(CODE_MEMORY_DIR)}
-    logs = {"memory": log_stats(MEMORY_LOG), "code": log_stats(CODE_LOG)}
+    logs = {
+        "memory": log_stats(MEMORY_LOG, MEMORY_LOG_ENABLED),
+        "code": log_stats(CODE_LOG, CODE_LOG_ENABLED),
+    }
     system = system_stats()
     strict_checks = [llama, qdrant, memories["engineering"], memories["code"], system]
 
@@ -971,23 +953,39 @@ def dashboard_delete_file(req: DeleteFileRequest) -> Dict[str, Any]:
 @app.get("/api/dashboard/logs")
 def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
     if source == "memory":
-        return read_last_lines(MEMORY_LOG)
+        return read_last_lines(MEMORY_LOG, source, MEMORY_LOG_ENABLED)
     if source == "code":
-        return read_last_lines(CODE_LOG)
+        return read_last_lines(CODE_LOG, source, CODE_LOG_ENABLED)
     if source == "dashboard":
         with JOBS_LOCK:
             lines = []
             for job in JOBS.values():
                 lines.append(f"[{job['status']}] {job['name']} {job['id']}")
                 lines.extend(job.get("output", [])[-80:])
-            return {"ok": True, "error": None, "source": source, "lines": lines[-MAX_LOG_LINES:]}
+            return {
+                "ok": True, "error": None, "source": source,
+                "state": "available" if lines else "empty", "enabled": LOG_CAPTURE["enabled"],
+                "message": None if lines else (
+                    "No dashboard activity has been captured yet."
+                    if LOG_CAPTURE["enabled"] else "Temporary log capture is disabled."
+                ),
+                "lines": lines[-MAX_LOG_LINES:],
+            }
     if source == "watchers":
         lines = []
         with WATCHERS_LOCK:
             for scope, watcher in WATCHERS.items():
                 lines.append(f"[{scope}] watcher")
                 lines.extend(watcher.get("output", [])[-160:])
-        return {"ok": True, "error": None, "source": source, "lines": lines[-MAX_LOG_LINES:]}
+        return {
+            "ok": True, "error": None, "source": source,
+            "state": "available" if lines else "empty", "enabled": LOG_CAPTURE["enabled"],
+            "message": None if lines else (
+                "No watcher has produced output yet. Watcher logs are temporary and are cleared when the dashboard restarts."
+                if LOG_CAPTURE["enabled"] else "Temporary log capture is disabled."
+            ),
+            "lines": lines[-MAX_LOG_LINES:],
+        }
     raise HTTPException(status_code=400, detail="source must be memory, code, dashboard, or watchers")
 
 

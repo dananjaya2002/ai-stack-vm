@@ -137,7 +137,7 @@ load_env() {
   LLM_BASE_URL="${LLM_BASE_URL:-http://vm-llama:8082/v1}"
   EMBED_MODEL_NAME="${EMBED_MODEL_NAME:-all-MiniLM-L6-v2}"
   HF_TOKEN="${HF_TOKEN:-}"
-  MEMORY_API_LOGS="${MEMORY_API_LOGS:-false}"
+  MEMORY_API_LOGS="${MEMORY_API_LOGS:-true}"
   MEMORY_API_LOG_FILE="${MEMORY_API_LOG_FILE:-/logs/memory/memory_api.log}"
   MEMORY_TOP_K="${MEMORY_TOP_K:-5}"
   MEMORY_SCORE_THRESHOLD="${MEMORY_SCORE_THRESHOLD:-0.5}"
@@ -383,7 +383,7 @@ EMBED_MODEL_NAME=all-MiniLM-L6-v2
 HF_TOKEN=
 
 # Memory proxy
-MEMORY_API_LOGS=false
+MEMORY_API_LOGS=true
 MEMORY_API_LOG_FILE=/logs/memory/memory_api.log
 MEMORY_TOP_K=5
 MEMORY_SCORE_THRESHOLD=0.5
@@ -443,7 +443,7 @@ ensure_root_env_defaults() {
   ensure_env_var LLM_BASE_URL http://vm-llama:8082/v1
   ensure_env_var EMBED_MODEL_NAME all-MiniLM-L6-v2
   ensure_env_var HF_TOKEN ""
-  ensure_env_var MEMORY_API_LOGS false
+  ensure_env_var MEMORY_API_LOGS true
   ensure_env_var MEMORY_API_LOG_FILE /logs/memory/memory_api.log
   ensure_env_var MEMORY_TOP_K 5
   ensure_env_var MEMORY_SCORE_THRESHOLD 0.5

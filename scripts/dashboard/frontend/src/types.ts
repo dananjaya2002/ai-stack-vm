@@ -1,6 +1,7 @@
 export type Scope = "engineering" | "code";
 export type TabId = "overview" | "logs" | "files" | "upload" | "repos" | "indexing" | "watchers" | "qdrant" | "settings";
 export type LogSource = "dashboard" | "watchers" | "memory" | "code";
+export type LogState = "available" | "disabled" | "empty" | "unavailable";
 
 export interface AuthStatus {
   required: boolean;
@@ -53,6 +54,8 @@ export interface DashboardStatus {
     ok: boolean;
     warning?: boolean;
     error?: string | null;
+    state: LogState;
+    enabled: boolean;
     path: string;
     exists: boolean;
     size_bytes: number;
@@ -88,6 +91,9 @@ export interface LogsResponse {
   source: LogSource;
   lines: string[];
   error?: string | null;
+  state: LogState;
+  enabled: boolean;
+  message?: string | null;
 }
 
 export interface Job {

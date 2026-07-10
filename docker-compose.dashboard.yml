@@ -14,6 +14,8 @@ services:
       CODE_MEMORY_DIR: /memory/code-memory
       MEMORY_LOG: /logs/memory/memory_api.log
       CODE_LOG: /logs/code/code_proxy.log
+      MEMORY_LOG_ENABLED: ${MEMORY_API_LOGS:-true}
+      CODE_LOG_ENABLED: ${CODE_PROXY_LOGS:-true}
       MEMORY_DIR: /memory/engineering-memory
       MEMORY_ROOT: /memory/engineering-memory
       REPOS_ROOT: /memory/code-memory

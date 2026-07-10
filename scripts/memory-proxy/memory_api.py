@@ -14,9 +14,10 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
+from shared.json_log import append_json_event
 
 LOG_FILE = Path(os.getenv("MEMORY_API_LOG_FILE", "/tmp/memory_api.log"))
-ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "false").lower() == "true"
+ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "true").lower() == "true"
 
 
 # CONFIG
@@ -216,13 +217,13 @@ def log_event(data):
     if not ENABLE_LOGGING:
         return
 
-    entry = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        **data
-    }
+    entry = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), **data}
+    error = append_json_event(LOG_FILE, entry)
+    if error:
+        print(f"Memory logging failed: {error}", file=sys.stderr)
 
-    with open(LOG_FILE, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+
+log_event({"type": "proxy_started", "service": "memory-proxy"})
 
 
 

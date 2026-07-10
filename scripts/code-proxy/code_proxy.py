@@ -16,6 +16,7 @@ from functools import lru_cache
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
+from shared.json_log import append_json_event
 
 
 app = FastAPI(title="Code Proxy API")
@@ -91,20 +92,17 @@ def log_event(event: str, data: Dict[str, Any]):
     if not ENABLE_LOGGING:
         return
 
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "event": event,
+        "data": data,
+    }
+    error = append_json_event(LOG_FILE, entry)
+    if error:
+        print(f"Logging failed: {error}", file=sys.stderr)
 
-        entry = {
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "event": event,
-            "data": data,
-        }
+log_event("proxy_started", {"service": "code-proxy"})
 
-        with LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-    except Exception as e:
-        print(f"⚠️ Logging failed: {e}")
 
 def latest_user_message(messages: List[ChatMessage]) -> str:
     for msg in reversed(messages):
