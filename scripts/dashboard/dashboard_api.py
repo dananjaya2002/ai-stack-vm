@@ -79,6 +79,37 @@ CONFIG_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "MAX_CONTEXT_CHARS": {"group": "Agentic RAG", "type": "integer", "default": "50000", "min": 1000, "max": 500000},
 }
 
+CONFIG_PRESENTATION: Dict[str, Dict[str, str]] = {
+    "SKIP_UTILITY_PROMPTS": {"label": "Skip utility prompts", "description": "Avoid retrieval for Open WebUI title, tag, and follow-up generation requests."},
+    "ENABLE_RATE_LIMIT": {"label": "Enable rate limiting", "description": "Limit how frequently clients can call the proxy APIs."},
+    "RATE_LIMIT_PER_MINUTE": {"label": "Requests per minute", "description": "Maximum requests accepted from a client during one minute."},
+    "LLAMA_CONTEXT": {"label": "Model context window", "description": "Maximum tokens the model can consider in one request. Larger values use more memory."},
+    "LLAMA_THREADS": {"label": "Model CPU threads", "description": "CPU threads used by llama.cpp for inference."},
+    "LLAMA_BATCH": {"label": "Prompt batch size", "description": "Number of prompt tokens processed together. Larger batches can improve speed but use more memory."},
+    "LLAMA_UBATCH": {"label": "Physical batch size", "description": "Maximum tokens processed in one physical llama.cpp batch."},
+    "MEMORY_API_LOGS": {"label": "Document logging", "description": "Write document-memory retrieval events to the persistent log file."},
+    "MEMORY_TOP_K": {"label": "Document results", "description": "Maximum document chunks supplied to the model for an answer."},
+    "MEMORY_SCORE_THRESHOLD": {"label": "Document relevance threshold", "description": "Minimum similarity score for accepting a document chunk. Lower values return more results."},
+    "CODE_PROXY_LOGS": {"label": "Code logging", "description": "Write code retrieval events to the persistent log file."},
+    "CODE_TOP_K": {"label": "Code results", "description": "Maximum code chunks supplied to the model for an answer."},
+    "CODE_SCORE_THRESHOLD": {"label": "Code relevance threshold", "description": "Minimum similarity score for accepting a code chunk."},
+    "MAX_CHUNKS_PER_FILE": {"label": "Chunks per file", "description": "Maximum chunks selected from one code file to keep results diverse."},
+    "SEARCH_LIMIT_MULTIPLIER": {"label": "Search candidate multiplier", "description": "Extra Qdrant candidates fetched before local filtering and ranking."},
+    "AGENTIC_RAG_LOGS": {"label": "Agentic RAG logging", "description": "Write retrieval steps, confidence, timing, and stop reasons to the Agentic RAG log."},
+    "ENABLE_INDEX_V2": {"label": "Use enhanced index", "description": "Enable metadata-aware chunks and retrieval behavior from the enhanced index."},
+    "ENABLE_AGENTIC_RETRIEVAL": {"label": "Enable agentic retrieval", "description": "Allow multi-step planning, evidence evaluation, and follow-up searches."},
+    "AGENTIC_MAX_STEPS": {"label": "Maximum retrieval steps", "description": "Safety limit for iterative Agentic RAG searches."},
+    "AGENTIC_INITIAL_SUBQUERIES": {"label": "Initial subqueries", "description": "Maximum focused searches created during the first retrieval step."},
+    "AGENTIC_FOLLOWUP_TOP_K": {"label": "Follow-up results", "description": "Maximum results fetched for each follow-up evidence query."},
+    "AGENTIC_MAX_TOTAL_CHUNKS": {"label": "Total evidence limit", "description": "Maximum unique chunks retained across every retrieval step."},
+    "AGENTIC_MIN_CONFIDENCE": {"label": "Required confidence", "description": "Confidence needed before Agentic RAG considers the evidence sufficient."},
+    "AGENTIC_TOP_K_PER_QUERY": {"label": "Initial results per query", "description": "Maximum chunks fetched for each initial retrieval query."},
+    "SIMPLE_TOP_K": {"label": "Simple retrieval results", "description": "Maximum chunks used when multi-step agentic retrieval is disabled."},
+    "AGENTIC_SCORE_THRESHOLD": {"label": "Agentic relevance threshold", "description": "Minimum Qdrant similarity score accepted by Agentic RAG."},
+    "MAX_CHUNK_CHARS": {"label": "Maximum chunk length", "description": "Maximum characters retained from an individual evidence chunk."},
+    "MAX_CONTEXT_CHARS": {"label": "Maximum evidence context", "description": "Maximum combined evidence characters passed to the answer model."},
+}
+
 INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
 INDEX_CODE_SCRIPT = Path(os.getenv("INDEX_CODE_SCRIPT", "/app/watcher/index_code.py"))
 WATCH_MEMORY_SCRIPT = Path(os.getenv("WATCH_MEMORY_SCRIPT", "/app/memory-proxy/watch_memory.py"))
@@ -474,7 +505,10 @@ def editable_config_payload() -> Dict[str, Any]:
     }
     return {
         "values": values,
-        "definitions": CONFIG_DEFINITIONS,
+        "definitions": {
+            name: {**definition, **CONFIG_PRESENTATION[name]}
+            for name, definition in CONFIG_DEFINITIONS.items()
+        },
         "env_file_available": AI_STACK_ENV_FILE.is_file(),
         "restart_required": True,
     }

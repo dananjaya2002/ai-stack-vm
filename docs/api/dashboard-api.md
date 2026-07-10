@@ -26,6 +26,11 @@ PUT  /api/dashboard/config
 POST /api/dashboard/config/reset
 ```
 
+The configuration response includes friendly labels, descriptions, defaults,
+types, and allowed ranges for dashboard-editable non-secret `.env` values.
+Saving or resetting configuration requires container recreation before the new
+values become active.
+
 `/api/dashboard/status` checks llama.cpp, Qdrant, memory folders, system usage,
 logs, and watcher state.
 

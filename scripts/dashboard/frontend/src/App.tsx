@@ -113,7 +113,7 @@ function Button({
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <label className="grid gap-2 text-sm font-bold text-ink">
       <span>{label}</span>
@@ -1244,16 +1244,31 @@ function SettingsTab({
             <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm font-bold text-bad">The host .env file is not mounted. Recreate the dashboard with the updated Compose configuration.</div>
           )}
           {Object.entries(groups).map(([group, names]) => (
-            <fieldset key={group} className="grid gap-3 rounded-lg border border-line p-4 md:grid-cols-2 xl:grid-cols-3">
-              <legend className="px-2 text-sm font-black">{group}</legend>
+            <fieldset key={group} className="grid gap-4 rounded-xl border border-line bg-slate-50/50 p-4 md:grid-cols-2 xl:grid-cols-3">
+              <legend className="px-2 text-base font-black">{group}</legend>
               {names.map((name) => {
                 const definition = definitions[name];
                 return (
-                  <Field key={name} label={name}>
+                  <Field
+                    key={name}
+                    label={
+                      <span className="flex items-center gap-2">
+                        <span>{definition.label}</span>
+                        <span
+                          className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-line bg-white text-xs font-black text-ocean"
+                          title={definition.description}
+                          aria-label={`${definition.label}: ${definition.description}`}
+                          tabIndex={0}
+                        >
+                          ?
+                        </span>
+                      </span>
+                    }
+                  >
                     {definition.type === "boolean" ? (
                       <select className="control" value={values[name] || definition.default} onChange={(event) => setValues({ ...values, [name]: event.target.value })}>
-                        <option value="true">true</option>
-                        <option value="false">false</option>
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
                       </select>
                     ) : (
                       <input
@@ -1266,6 +1281,10 @@ function SettingsTab({
                         onChange={(event) => setValues({ ...values, [name]: event.target.value })}
                       />
                     )}
+                    <span className="text-xs font-normal leading-5 text-muted">
+                      {definition.description} Default: {definition.default}
+                      {definition.min !== undefined && definition.max !== undefined ? ` · Range: ${definition.min}–${definition.max}` : ""}
+                    </span>
                   </Field>
                 );
               })}
@@ -1276,13 +1295,13 @@ function SettingsTab({
       <div className="grid gap-5 xl:grid-cols-2">
       <Panel>
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h3 className="text-base font-black">Runtime Settings</h3>
+            <h3 className="text-base font-black">Active runtime values</h3>
           <Button onClick={refresh}>Refresh</Button>
         </div>
         <KeyValueTable rows={rows} />
       </Panel>
       <Panel>
-        <h3 className="mb-4 text-base font-black">Mounted Paths</h3>
+          <h3 className="mb-4 text-base font-black">Storage locations</h3>
         <KeyValueTable rows={paths} />
       </Panel>
       </div>

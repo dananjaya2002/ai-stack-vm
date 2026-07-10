@@ -136,6 +136,8 @@ export interface DashboardSettingsResponse {
     values: Record<string, string>;
     definitions: Record<string, {
       group: string;
+      label: string;
+      description: string;
       type: "boolean" | "integer" | "number";
       default: string;
       min?: number;
