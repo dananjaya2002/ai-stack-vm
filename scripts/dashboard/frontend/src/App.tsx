@@ -53,6 +53,7 @@ const logSources: Array<{ value: LogSource; label: string }> = [
   { value: "watchers", label: "Watchers" },
   { value: "memory", label: "Memory proxy" },
   { value: "code", label: "Code proxy" },
+  { value: "agentic-rag", label: "Agentic RAG" },
 ];
 
 function formatBytes(value?: number | null) {
@@ -650,11 +651,12 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
     },
     {
       title: "Logs",
-      ok: Boolean(status?.logs.memory.ok && status?.logs.code.ok),
+      ok: Boolean(status?.logs.memory.ok && status?.logs.code.ok && status?.logs["agentic-rag"]?.ok),
       warning: true,
       rows: [
         ["Memory log", formatLogState(status?.logs.memory.state)],
         ["Code log", formatLogState(status?.logs.code.state)],
+        ["Agentic RAG", formatLogState(status?.logs["agentic-rag"]?.state)],
       ],
     },
   ];

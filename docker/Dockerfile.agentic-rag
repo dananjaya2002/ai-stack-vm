@@ -15,6 +15,9 @@ COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
 COPY --chown=appuser:appuser scripts/shared ./shared
 COPY --chown=appuser:appuser scripts/config ./config
 
+# Seed the named volume with a directory writable by the non-root proxy user.
+RUN mkdir -p /logs/agentic-rag && chown -R appuser:appuser /logs/agentic-rag
+
 USER appuser
 EXPOSE 9200
 

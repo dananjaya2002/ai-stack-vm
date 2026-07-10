@@ -14,8 +14,10 @@ services:
       CODE_MEMORY_DIR: /memory/code-memory
       MEMORY_LOG: /logs/memory/memory_api.log
       CODE_LOG: /logs/code/code_proxy.log
+      AGENTIC_RAG_LOG: /logs/agentic-rag/agentic_rag.log
       MEMORY_LOG_ENABLED: ${MEMORY_API_LOGS:-true}
       CODE_LOG_ENABLED: ${CODE_PROXY_LOGS:-true}
+      AGENTIC_RAG_LOG_ENABLED: ${AGENTIC_RAG_LOGS:-true}
       MEMORY_DIR: /memory/engineering-memory
       MEMORY_ROOT: /memory/engineering-memory
       REPOS_ROOT: /memory/code-memory
@@ -36,6 +38,7 @@ services:
       - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory
       - memory_logs:/logs/memory
       - code_logs:/logs/code
+      - agentic_rag_logs:/logs/agentic-rag
     restart: unless-stopped
 
   indexer:
@@ -64,3 +67,4 @@ services:
 volumes:
   memory_logs:
   code_logs:
+  agentic_rag_logs:

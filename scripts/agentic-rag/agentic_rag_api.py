@@ -18,6 +18,7 @@ from sentence_transformers import SentenceTransformer
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.config_loader import default_config_path, load_json_object, require_string_sets
+from shared.json_log import append_json_event
 
 
 SourceName = Literal["code", "memory"]
@@ -138,22 +139,19 @@ class SearchRequest(BaseModel):
 def log_event(event: str, data: Dict[str, Any]) -> None:
     if not ENABLE_LOGGING:
         return
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_FILE.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    {
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "event": event,
-                        "data": data,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    except Exception as exc:
-        print(f"agentic-rag logging failed: {exc}", file=sys.stderr)
+    error = append_json_event(
+        LOG_FILE,
+        {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "event": event,
+            "data": data,
+        },
+    )
+    if error:
+        print(f"agentic-rag logging failed: {error}", file=sys.stderr)
+
+
+log_event("proxy_started", {"service": "agentic-rag"})
 
 
 def latest_user_message(messages: List[ChatMessage]) -> str:

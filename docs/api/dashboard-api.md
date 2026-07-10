@@ -19,7 +19,7 @@ dashboard session cookie.
 ```text
 GET  /api/dashboard/status
 GET  /api/dashboard/settings
-GET  /api/dashboard/logs?source=dashboard|watchers|memory|code
+GET  /api/dashboard/logs?source=dashboard|watchers|memory|code|agentic-rag
 POST /api/dashboard/log-capture
 ```
 

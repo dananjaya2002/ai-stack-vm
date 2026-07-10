@@ -41,8 +41,10 @@ ENGINEERING_MEMORY_DIR = Path(os.getenv("ENGINEERING_MEMORY_DIR", "/memory/engin
 CODE_MEMORY_DIR = Path(os.getenv("CODE_MEMORY_DIR", "/memory/code-memory"))
 MEMORY_LOG = Path(os.getenv("MEMORY_LOG", "/logs/memory/memory_api.log"))
 CODE_LOG = Path(os.getenv("CODE_LOG", "/logs/code/code_proxy.log"))
+AGENTIC_RAG_LOG = Path(os.getenv("AGENTIC_RAG_LOG", "/logs/agentic-rag/agentic_rag.log"))
 MEMORY_LOG_ENABLED = os.getenv("MEMORY_LOG_ENABLED", "true").lower() == "true"
 CODE_LOG_ENABLED = os.getenv("CODE_LOG_ENABLED", "true").lower() == "true"
+AGENTIC_RAG_LOG_ENABLED = os.getenv("AGENTIC_RAG_LOG_ENABLED", "true").lower() == "true"
 DASHBOARD_LOG_DIR = Path(os.getenv("DASHBOARD_LOG_DIR", "/tmp/ai-stack-dashboard"))
 
 INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
@@ -877,6 +879,7 @@ def dashboard_status() -> Dict[str, Any]:
     logs = {
         "memory": log_stats(MEMORY_LOG, MEMORY_LOG_ENABLED),
         "code": log_stats(CODE_LOG, CODE_LOG_ENABLED),
+        "agentic-rag": log_stats(AGENTIC_RAG_LOG, AGENTIC_RAG_LOG_ENABLED),
     }
     system = system_stats()
     strict_checks = [llama, qdrant, memories["engineering"], memories["code"], system]
@@ -904,6 +907,7 @@ def dashboard_settings() -> Dict[str, Any]:
             "code_memory": str(CODE_MEMORY_DIR),
             "memory_log": str(MEMORY_LOG),
             "code_log": str(CODE_LOG),
+            "agentic_rag_log": str(AGENTIC_RAG_LOG),
             "dashboard_log_dir": str(DASHBOARD_LOG_DIR),
         },
     }
@@ -956,6 +960,8 @@ def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
         return read_last_lines(MEMORY_LOG, source, MEMORY_LOG_ENABLED)
     if source == "code":
         return read_last_lines(CODE_LOG, source, CODE_LOG_ENABLED)
+    if source == "agentic-rag":
+        return read_last_lines(AGENTIC_RAG_LOG, source, AGENTIC_RAG_LOG_ENABLED)
     if source == "dashboard":
         with JOBS_LOCK:
             lines = []
@@ -986,7 +992,10 @@ def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
             ),
             "lines": lines[-MAX_LOG_LINES:],
         }
-    raise HTTPException(status_code=400, detail="source must be memory, code, dashboard, or watchers")
+    raise HTTPException(
+        status_code=400,
+        detail="source must be memory, code, agentic-rag, dashboard, or watchers",
+    )
 
 
 @app.post("/api/dashboard/log-capture")

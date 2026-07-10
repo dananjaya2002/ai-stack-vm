@@ -1,6 +1,6 @@
 export type Scope = "engineering" | "code";
 export type TabId = "overview" | "logs" | "files" | "upload" | "repos" | "indexing" | "watchers" | "qdrant" | "settings";
-export type LogSource = "dashboard" | "watchers" | "memory" | "code";
+export type LogSource = "dashboard" | "watchers" | "memory" | "code" | "agentic-rag";
 export type LogState = "available" | "disabled" | "empty" | "unavailable";
 
 export interface AuthStatus {
@@ -50,7 +50,7 @@ export interface DashboardStatus {
     ram?: { usage_percent: number; total_bytes: number; available_bytes: number; used_bytes: number };
     disk?: { path: string; usage_percent: number; total_bytes: number; free_bytes: number; used_bytes: number };
   };
-  logs: Record<"memory" | "code", {
+  logs: Record<"memory" | "code" | "agentic-rag", {
     ok: boolean;
     warning?: boolean;
     error?: string | null;
