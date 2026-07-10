@@ -16,6 +16,9 @@ COPY --chown=appuser:appuser scripts/memory-proxy/memory_api.py ./memory_api.py
 COPY --chown=appuser:appuser scripts/proxy_security.py ./proxy_security.py
 COPY --chown=appuser:appuser scripts/shared/json_log.py ./shared/json_log.py
 
+# Seed the named volume with a directory writable by the non-root proxy user.
+RUN mkdir -p /logs/memory && chown -R appuser:appuser /logs/memory
+
 # Switch to the non-root execution user
 USER appuser
 # Expose your targeted service port
