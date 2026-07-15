@@ -1,12 +1,10 @@
 import os
-import json
 import time
 import sys
 from pathlib import Path
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
-import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
@@ -17,7 +15,8 @@ from functools import lru_cache
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.json_log import append_json_event
-from shared.utility_prompts import classify_utility_prompt, utility_prompt_content
+from shared.openai_compat import proxy_completion, upstream_payload
+from shared.utility_prompts import classify_utility_prompt
 
 
 app = FastAPI(title="Code Proxy API")
@@ -387,10 +386,15 @@ User request:
 """.strip()
 
 
-def call_llm(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -> Dict[str, Any]:
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [
+def call_llm(
+    prompt: str,
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+    stream: bool = False,
+) -> Any:
+    payload = upstream_payload(
+        LLM_MODEL,
+        [
             {
                 "role": "system",
                 "content": "You are a precise, practical coding assistant.",
@@ -400,19 +404,17 @@ def call_llm(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -> D
                 "content": prompt,
             },
         ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-
-    response = requests.post(
-        f"{LLM_BASE_URL}/chat/completions",
-        json=payload,
-        timeout=300,
+        temperature,
+        max_tokens,
+        stream,
     )
-
-    response.raise_for_status()
-    return response.json()
+    return proxy_completion(
+        f"{LLM_BASE_URL}/chat/completions",
+        payload,
+        "code-proxy",
+        "code-proxy",
+        stream,
+    )
 
 
 @lru_cache(maxsize=256)
@@ -461,18 +463,20 @@ def chat_completions(req: ChatCompletionRequest):
     utility_prompt_type = classify_utility_prompt(user_question) if SKIP_UTILITY_PROMPTS else None
     if utility_prompt_type:
         log_event("utility_prompt_skipped", {"utility_prompt_type": utility_prompt_type})
-        return {
-            "id": "code-proxy-utility",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": "code-proxy",
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": utility_prompt_content(utility_prompt_type)},
-                "finish_reason": "stop",
-            }],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        }
+        payload = upstream_payload(
+            LLM_MODEL,
+            [{"role": message.role, "content": message.content} for message in req.messages],
+            req.temperature or 0.2,
+            req.max_tokens or 2048,
+            bool(req.stream),
+        )
+        return proxy_completion(
+            f"{LLM_BASE_URL}/chat/completions",
+            payload,
+            "code-proxy",
+            "code-proxy-utility",
+            bool(req.stream),
+        )
 
     chunks = search_code(user_question)
     context = build_code_context(chunks)
@@ -490,6 +494,7 @@ def chat_completions(req: ChatCompletionRequest):
         prompt,
         temperature=req.temperature or 0.2,
         max_tokens=req.max_tokens or 2048,
+        stream=bool(req.stream),
     )
 
     return llm_response

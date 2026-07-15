@@ -10,6 +10,7 @@ from qdrant_client.models import (
     Filter,
     FieldCondition,
     MatchValue,
+    PayloadSchemaType,
 )
 
 from sentence_transformers import SentenceTransformer
@@ -48,6 +49,15 @@ if COLLECTION_NAME not in collection_names:
     )
 else:
     print(f"Using existing collection: {COLLECTION_NAME}")
+
+try:
+    client.create_payload_index(
+        collection_name=COLLECTION_NAME,
+        field_name="file_name",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
+except Exception as exc:
+    print(f"Warning: could not ensure file_name payload index: {exc}")
 
 
 # HELPER FUNCTIONS
@@ -114,6 +124,7 @@ def index(file_path=None):
                 "vector": embedding,
                 "payload": {
                     "file": str(file_path),
+                    "file_name": file_path.name.lower(),
                     "chunk_index": idx,
                     "category": file_path.parent.name,
                     "text": chunk

@@ -80,7 +80,7 @@ CONFIG_DEFINITIONS: Dict[str, Dict[str, Any]] = {
 }
 
 CONFIG_PRESENTATION: Dict[str, Dict[str, str]] = {
-    "SKIP_UTILITY_PROMPTS": {"label": "Skip utility prompts", "description": "Avoid retrieval for Open WebUI title, tag, and follow-up generation requests."},
+    "SKIP_UTILITY_PROMPTS": {"label": "Skip retrieval for utility prompts", "description": "Send Open WebUI title, tag, and follow-up requests directly to the model without RAG retrieval."},
     "ENABLE_RATE_LIMIT": {"label": "Enable rate limiting", "description": "Limit how frequently clients can call the proxy APIs."},
     "RATE_LIMIT_PER_MINUTE": {"label": "Requests per minute", "description": "Maximum requests accepted from a client during one minute."},
     "LLAMA_CONTEXT": {"label": "Model context window", "description": "Maximum tokens the model can consider in one request. Larger values use more memory."},

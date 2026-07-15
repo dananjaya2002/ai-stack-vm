@@ -43,6 +43,12 @@ Agentic RAG settings live in root `.env`, including:
 - `AGENTIC_MIN_CONFIDENCE`
 - `AGENTIC_TOP_K_PER_QUERY`
 
+Questions that name a memory document, such as `Runbook.md`, first perform an
+exact, case-insensitive filename lookup. Matching chunks are reconstructed in
+document order and bypass multi-step planning. Reindex existing memory documents
+after upgrading so the normalized `file_name` payload is available; a legacy
+payload scan remains as a compatibility fallback.
+
 ## Related Docs
 
 - [Data flow](../architecture/data-flow.md)

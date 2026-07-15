@@ -5,17 +5,15 @@ from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
-import requests
-
 import os
-import json
 import time
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.json_log import append_json_event
-from shared.utility_prompts import classify_utility_prompt, utility_prompt_content
+from shared.openai_compat import proxy_completion, upstream_payload
+from shared.utility_prompts import classify_utility_prompt
 
 LOG_FILE = Path(os.getenv("MEMORY_API_LOG_FILE", "/tmp/memory_api.log"))
 ENABLE_LOGGING = os.getenv("MEMORY_API_LOGS", "true").lower() == "true"
@@ -192,21 +190,26 @@ Answer clearly and practically.
 # -----------------------------
 # MODEL CALL
 # -----------------------------
-def query_model(prompt):
+def query_model(prompt, stream=False):
     try:
-        res = requests.post(
-            LLAMA_API,
-            json={
-                "model": MODEL_NAME,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            },
-            timeout=60
+        payload = upstream_payload(
+            MODEL_NAME,
+            [{"role": "user", "content": prompt}],
+            0.2,
+            2048,
+            stream,
         )
-
-        data = res.json()
-        return data["choices"][0]["message"]["content"]
+        result = proxy_completion(
+            LLAMA_API,
+            payload,
+            "memory-proxy",
+            "memory-proxy",
+            stream,
+            timeout=300,
+        )
+        if stream:
+            return result
+        return result["choices"][0]["message"]["content"]
 
     except Exception as e:
         return f"⚠️ Model error: {e}"
@@ -289,18 +292,21 @@ def openai_chat(req: dict):
                 "type": "utility_prompt_skipped",
                 "utility_prompt_type": utility_prompt_type,
             })
-            return {
-                "id": "memory-proxy-utility",
-                "object": "chat.completion",
-                "choices": [{
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": utility_prompt_content(utility_prompt_type),
-                    },
-                    "finish_reason": "stop",
-                }],
-            }
+            stream = bool(req.get("stream", False))
+            payload = upstream_payload(
+                MODEL_NAME,
+                messages,
+                float(req.get("temperature", 0.2)),
+                int(req.get("max_tokens", 2048)),
+                stream,
+            )
+            return proxy_completion(
+                LLAMA_API,
+                payload,
+                "memory-proxy",
+                "memory-proxy-utility",
+                stream,
+            )
 
         contexts = search_memory(user_msg)
         prompt = build_prompt(user_msg, contexts)
@@ -311,6 +317,23 @@ def openai_chat(req: dict):
             "query": user_msg,
             "context_size": len(contexts)
         })
+
+        stream = bool(req.get("stream", False))
+        if stream:
+            payload = upstream_payload(
+                MODEL_NAME,
+                [{"role": "user", "content": prompt}],
+                float(req.get("temperature", 0.2)),
+                int(req.get("max_tokens", 2048)),
+                True,
+            )
+            return proxy_completion(
+                LLAMA_API,
+                payload,
+                "memory-proxy",
+                "memory-proxy",
+                True,
+            )
 
         answer = query_model(prompt)
 

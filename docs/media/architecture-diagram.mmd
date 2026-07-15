@@ -1,10 +1,53 @@
 flowchart LR
-  Client[Browser / IDE] --> WebUI[Open WebUI]
-  Client --> CodeProxy[Code Proxy]
-  Client --> MemoryProxy[Memory Proxy]
-  WebUI --> Llama[llama.cpp OpenAI API]
-  CodeProxy --> Llama
-  MemoryProxy --> Llama
-  CodeProxy --> Qdrant[Qdrant vector DB]
+  Client[Browser / IDE / curl]
+
+  subgraph Interfaces[User interfaces]
+    WebUI[Open WebUI]
+    Dashboard[Management Dashboard]
+  end
+
+  subgraph APIs[OpenAI-compatible APIs]
+    Llama[llama.cpp model server]
+    MemoryProxy[Memory Proxy]
+    CodeProxy[Code Proxy]
+    AgenticRAG[Agentic RAG<br/>optional]
+  end
+
+  subgraph Retrieval[Retrieval and indexing]
+    MemoryIndexer[Memory indexer / watcher]
+    CodeIndexer[Code indexer / watcher]
+    Qdrant[(Qdrant vector DB<br/>engineering-memory + code-memory)]
+  end
+
+  subgraph Sources[Local runtime data]
+    Notes[(Engineering notes)]
+    Repos[(Code repositories)]
+    Models[(GGUF models)]
+  end
+
+  Client --> WebUI
+  Client --> Dashboard
+  Client --> MemoryProxy
+  Client --> CodeProxy
+  Client --> AgenticRAG
+
+  WebUI --> Llama
+  WebUI --> MemoryProxy
+  WebUI --> CodeProxy
+  WebUI --> AgenticRAG
+
   MemoryProxy --> Qdrant
-  Qdrant --> Memory[(Engineering notes and code repos)]
+  CodeProxy --> Qdrant
+  AgenticRAG --> Qdrant
+  MemoryProxy --> Llama
+  CodeProxy --> Llama
+  AgenticRAG --> Llama
+
+  Dashboard -. status and operations .-> Llama
+  Dashboard -. status and operations .-> Qdrant
+  Dashboard -. indexing and watchers .-> MemoryIndexer
+  Dashboard -. indexing and watchers .-> CodeIndexer
+
+  Notes --> MemoryIndexer --> Qdrant
+  Repos --> CodeIndexer --> Qdrant
+  Models --> Llama

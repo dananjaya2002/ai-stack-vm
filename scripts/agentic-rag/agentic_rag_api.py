@@ -13,13 +13,16 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 from sentence_transformers import SentenceTransformer
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.config_loader import default_config_path, load_json_object, require_string_sets
+from shared.document_refs import extract_document_filename
 from shared.json_log import append_json_event
-from shared.utility_prompts import classify_utility_prompt, utility_prompt_content
+from shared.openai_compat import proxy_completion, upstream_payload
+from shared.utility_prompts import classify_utility_prompt
 
 
 SourceName = Literal["code", "memory"]
@@ -302,6 +305,9 @@ Return:
     if not isinstance(sources, list) or not sources:
         data["sources"] = fallback["sources"]
     data["sources"] = [source for source in data["sources"] if source in {"code", "memory"}] or fallback["sources"]
+    for required_source in fallback["sources"]:
+        if required_source not in data["sources"]:
+            data["sources"].append(required_source)
     return data
 
 
@@ -375,7 +381,14 @@ Use at most {AGENTIC_INITIAL_SUBQUERIES} planned queries.
                 "source": source,
             }
         )
-    return plan or fallback["plan"]
+    plan = plan or fallback["plan"]
+    if "memory" in heuristic_sources(question) and not any(item["source"] == "memory" for item in plan):
+        memory_query = {"sub_question": question, "query": question, "source": "memory"}
+        if len(plan) >= AGENTIC_INITIAL_SUBQUERIES:
+            plan[-1] = memory_query
+        else:
+            plan.append(memory_query)
+    return plan
 
 
 def collection_for_source(source: SourceName) -> str:
@@ -405,7 +418,7 @@ def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]
         "line_start": payload.get("line_start"),
         "line_end": payload.get("line_end"),
         "content_hash": content_hash,
-        "score": float(point.score or 0),
+        "score": float(getattr(point, "score", 1.0) or 0),
         "query": query,
         "language": payload.get("language"),
         "category": payload.get("category"),
@@ -437,6 +450,68 @@ def search_source(query: str, source: SourceName, top_k: int) -> List[Dict[str, 
         if len(chunks) >= top_k:
             break
     return chunks
+
+
+def exact_memory_document(filename: str) -> List[Dict[str, Any]]:
+    normalized = Path(filename).name.lower()
+    records: List[Any] = []
+    try:
+        records, _ = client.scroll(
+            collection_name=MEMORY_COLLECTION,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="file_name", match=MatchValue(value=normalized))]
+            ),
+            limit=AGENTIC_MAX_TOTAL_CHUNKS * 8,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception as exc:
+        log_event("exact_document_index_lookup_error", {"filename": normalized, "error": str(exc)})
+
+    # Existing points do not have file_name until memory is reindexed.
+    if not records:
+        offset = None
+        try:
+            while True:
+                page, offset = client.scroll(
+                    collection_name=MEMORY_COLLECTION,
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                records.extend(
+                    record
+                    for record in page
+                    if Path(str((record.payload or {}).get("file") or "")).name.lower() == normalized
+                )
+                if offset is None:
+                    break
+        except Exception as exc:
+            log_event("exact_document_legacy_scan_error", {"filename": normalized, "error": str(exc)})
+
+    chunks = [point_to_chunk(record, "memory", filename) for record in records]
+    chunks.sort(key=lambda item: (item.get("file_path") or "", int(item.get("chunk_index") or 0)))
+    selected: List[Dict[str, Any]] = []
+    context_chars = 0
+    for chunk in chunks:
+        text_length = len(chunk.get("text") or "")
+        if selected and context_chars + text_length > MAX_CONTEXT_CHARS:
+            break
+        selected.append(chunk)
+        context_chars += text_length
+    log_event(
+        "exact_document_lookup",
+        {
+            "filename": normalized,
+            "collection": MEMORY_COLLECTION,
+            "matched_paths": sorted({chunk["file_path"] for chunk in chunks}),
+            "matched_chunks": len(chunks),
+            "selected_chunks": len(selected),
+            "context_chars": context_chars,
+        },
+    )
+    return selected
 
 
 def dedupe_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -717,6 +792,28 @@ def run_simple_retrieval(question: str) -> Dict[str, Any]:
 
 
 def run_agentic_retrieval(question: str) -> Dict[str, Any]:
+    filename = extract_document_filename(question)
+    if filename:
+        started = time.monotonic()
+        chunks = exact_memory_document(filename)
+        if chunks:
+            elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+            return {
+                "analysis": {**fallback_analysis(question), "resolved_filename": filename},
+                "plan": [{"sub_question": question, "query": filename, "source": "memory"}],
+                "queries_used": [{"step": "1", "query": filename, "source": "memory"}],
+                "chunks": chunks,
+                "evaluations": [],
+                "confidence": 1.0,
+                "confidence_components": {"exact_filename_match": 1.0},
+                "stop_reason": "exact_document_match",
+                "retrieval_mode": "exact_document",
+                "elapsed_ms": elapsed_ms,
+            }
+        log_event(
+            "exact_document_fallback",
+            {"filename": filename, "collection": MEMORY_COLLECTION, "retrieval_mode": "semantic"},
+        )
     if not ENABLE_INDEX_V2 or not ENABLE_AGENTIC_RETRIEVAL:
         return run_simple_retrieval(question)
 
@@ -833,8 +930,11 @@ def run_agentic_retrieval(question: str) -> Dict[str, Any]:
     }
 
 
-def build_final_answer(question: str, trace: Dict[str, Any], temperature: float, max_tokens: int) -> str:
-    chunks = select_answer_chunks(question, trace.get("chunks", []))
+def build_final_messages(question: str, trace: Dict[str, Any]) -> List[Dict[str, str]]:
+    if trace.get("retrieval_mode") == "exact_document":
+        chunks = trace.get("chunks", [])
+    else:
+        chunks = select_answer_chunks(question, trace.get("chunks", []))
     trace["answer_chunks"] = chunks
     citations = [format_citation(chunk) for chunk in chunks]
     prompt = f"""
@@ -859,15 +959,17 @@ Evidence:
 Known citations:
 {json.dumps(citations, ensure_ascii=False)}
 """
+    return [
+        {"role": "system", "content": "You answer with grounded citations and do not invent evidence."},
+        {"role": "user", "content": prompt},
+    ]
+
+
+def build_final_answer(question: str, trace: Dict[str, Any], temperature: float, max_tokens: int) -> str:
+    messages = build_final_messages(question, trace)
+    chunks = trace.get("answer_chunks", [])
     try:
-        return call_llm_messages(
-            [
-                {"role": "system", "content": "You answer with grounded citations and do not invent evidence."},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        return call_llm_messages(messages, temperature=temperature, max_tokens=max_tokens)
     except Exception as exc:
         log_event("final_answer_error", {"error": str(exc)})
         if not chunks:
@@ -990,7 +1092,37 @@ def chat_completions(req: ChatCompletionRequest):
                 "question_hash": hashlib.sha256(user_question.encode("utf-8")).hexdigest()[:12],
             },
         )
-        return chat_completion_payload(utility_prompt_content(utility_prompt_type))
+        payload = upstream_payload(
+            LLM_MODEL,
+            [{"role": message.role, "content": message.content} for message in req.messages],
+            req.temperature or 0.2,
+            req.max_tokens or 2048,
+            bool(req.stream),
+        )
+        return proxy_completion(
+            f"{LLM_BASE_URL}/chat/completions",
+            payload,
+            "agentic-rag",
+            "agentic-rag-utility",
+            bool(req.stream),
+        )
+
+    if req.stream:
+        trace = run_agentic_retrieval(user_question)
+        payload = upstream_payload(
+            LLM_MODEL,
+            build_final_messages(user_question, trace),
+            req.temperature or 0.2,
+            req.max_tokens or 2048,
+            True,
+        )
+        return proxy_completion(
+            f"{LLM_BASE_URL}/chat/completions",
+            payload,
+            "agentic-rag",
+            "agentic-rag",
+            True,
+        )
 
     result = answer_question(
         user_question,
