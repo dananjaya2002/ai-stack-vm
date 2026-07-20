@@ -130,6 +130,19 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
+    environment:
+      # The bundled 3B model is reliable with pre-injected file context, but it
+      # may print Open WebUI's native tool calls as JSON instead of executing
+      # them. Keep uploads/RAG enabled while withholding autonomous tools.
+      DEFAULT_MODEL_METADATA: '{"capabilities":{"file_context":true,"builtin_tools":false}}'
+      DEFAULT_MODEL_PARAMS: '{"function_calling":"legacy"}'
+      # Avoid background generations competing with chat inference on the VM.
+      ENABLE_AUTOCOMPLETE_GENERATION: ${OPEN_WEBUI_ENABLE_AUTOCOMPLETE_GENERATION:-false}
+      ENABLE_FOLLOW_UP_GENERATION: ${OPEN_WEBUI_ENABLE_FOLLOW_UP_GENERATION:-false}
+      ENABLE_TAGS_GENERATION: ${OPEN_WEBUI_ENABLE_TAGS_GENERATION:-false}
+      # Keep useful chat titles, but do not add a second emoji icon beside the
+      # Open WebUI favicon in the browser tab.
+      TITLE_GENERATION_PROMPT_TEMPLATE: '${OPEN_WEBUI_TITLE_GENERATION_PROMPT_TEMPLATE:-Generate a concise 3-5 word plain-text title for this chat. Do not use emoji, icons, quotation marks, markdown, or JSON. Return only the title. Chat history: {{MESSAGES:END:2}}}'
     ports:
       - "${OPEN_WEBUI_BIND_HOST:-0.0.0.0}:8080:8080"
     volumes:
