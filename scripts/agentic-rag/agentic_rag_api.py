@@ -22,6 +22,11 @@ from shared.config_loader import default_config_path, load_json_object, require_
 from shared.document_refs import extract_document_filename
 from shared.json_log import append_json_event
 from shared.openai_compat import proxy_completion, upstream_payload
+from shared.source_locations import (
+    canonical_source_path,
+    clean_source_markers,
+    format_source_location,
+)
 from shared.utility_prompts import classify_utility_prompt
 
 
@@ -407,6 +412,13 @@ def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]
     )
     repo_name = payload.get("repo") or payload.get("repo_name")
     chunk_index = payload.get("chunk_index", payload.get("symbol_subchunk_index", 0))
+    source_path = canonical_source_path(
+        source,
+        repo_name=repo_name,
+        relative_path=payload.get("relative_path"),
+        file_path=file_path,
+        source_path=payload.get("source_path"),
+    )
     raw_id = payload.get("chunk_id") or f"{source}:{repo_name or ''}:{file_path}:{chunk_index}"
     content_hash = payload.get("content_hash") or hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
     return {
@@ -414,6 +426,7 @@ def point_to_chunk(point: Any, source: SourceName, query: str) -> Dict[str, Any]
         "source_type": source,
         "repo_name": repo_name,
         "file_path": str(file_path),
+        "source_path": source_path,
         "chunk_index": chunk_index,
         "line_start": payload.get("line_start"),
         "line_end": payload.get("line_end"),
@@ -533,14 +546,15 @@ def dedupe_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def format_citation(chunk: Dict[str, Any]) -> str:
-    path = chunk.get("file_path") or "unknown"
-    line_start = chunk.get("line_start")
-    line_end = chunk.get("line_end")
-    if line_start and line_end:
-        return f"{path}:{line_start}-{line_end}"
-    if chunk.get("repo_name"):
-        return f"{chunk.get('repo_name')}/{path}#chunk-{chunk.get('chunk_index')}"
-    return f"{path}#chunk-{chunk.get('chunk_index')}"
+    return format_source_location(
+        str(chunk.get("source_type") or "code"),
+        repo_name=chunk.get("repo_name"),
+        file_path=chunk.get("file_path"),
+        source_path=chunk.get("source_path"),
+        line_start=chunk.get("line_start"),
+        line_end=chunk.get("line_end"),
+        chunk_index=chunk.get("chunk_index"),
+    )
 
 
 def format_evidence(chunks: List[Dict[str, Any]]) -> str:
@@ -549,15 +563,15 @@ def format_evidence(chunks: List[Dict[str, Any]]) -> str:
     for index, chunk in enumerate(chunks, start=1):
         text = chunk.get("text") or ""
         block = f"""
-[SOURCE {index}]
-Citation: {format_citation(chunk)}
+[EVIDENCE {index}]
+Location: {format_citation(chunk)}
 Source type: {chunk.get("source_type")}
 Score: {round(float(chunk.get("score") or 0), 4)}
 Category: {chunk.get("category")}
 Symbol: {chunk.get("symbol_type")} {chunk.get("symbol_name")}
 
 {text}
-[/SOURCE {index}]
+[/EVIDENCE {index}]
 """.strip()
         if total_chars + len(block) > MAX_CONTEXT_CHARS:
             break
@@ -941,8 +955,9 @@ def build_final_messages(question: str, trace: Dict[str, Any]) -> List[Dict[str,
 You are an agentic RAG assistant connected to private code and memory indexes.
 
 Answer the user question using the retrieved evidence. If evidence is incomplete,
-say what is uncertain. Cite sources inline using [SOURCE N] references and include
-a short Sources section.
+say what is uncertain. Refer to evidence inline using the exact Location value.
+Never use numbered source labels such as [Source 1] and do not add a numbered
+Sources section. Memory locations must remain filenames only.
 
 User question:
 {question}
@@ -956,7 +971,7 @@ Stop reason:
 Evidence:
 {format_evidence(chunks)}
 
-Known citations:
+Allowed locations:
 {json.dumps(citations, ensure_ascii=False)}
 """
     return [
@@ -969,15 +984,16 @@ def build_final_answer(question: str, trace: Dict[str, Any], temperature: float,
     messages = build_final_messages(question, trace)
     chunks = trace.get("answer_chunks", [])
     try:
-        return call_llm_messages(messages, temperature=temperature, max_tokens=max_tokens)
+        answer = call_llm_messages(messages, temperature=temperature, max_tokens=max_tokens)
+        return clean_source_markers(answer, [format_citation(chunk) for chunk in chunks])
     except Exception as exc:
         log_event("final_answer_error", {"error": str(exc)})
         if not chunks:
             return f"I could not find indexed evidence for this question. Model call failed: {exc}"
-        sources = "\n".join(f"- [SOURCE {i}] {format_citation(chunk)}" for i, chunk in enumerate(chunks, start=1))
+        sources = "\n".join(f"- {format_citation(chunk)}" for chunk in chunks)
         return (
             "I found relevant indexed evidence, but the final model call failed. "
-            f"Error: {exc}\n\nSources:\n{sources}"
+            f"Error: {exc}\n\nFiles:\n{sources}"
         )
 
 
@@ -1122,6 +1138,10 @@ def chat_completions(req: ChatCompletionRequest):
             "agentic-rag",
             "agentic-rag",
             True,
+            content_transform=lambda content: clean_source_markers(
+                content,
+                [format_citation(chunk) for chunk in trace.get("answer_chunks", [])],
+            ),
         )
 
     result = answer_question(

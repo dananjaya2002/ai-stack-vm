@@ -24,6 +24,7 @@ from shared.config_loader import (
     require_string_set,
     require_symbol_patterns,
 )
+from shared.source_locations import canonical_source_path
 
 
 # -----------------------------
@@ -125,36 +126,48 @@ def read_file(path: Path) -> str:
         return ""
 
 
-def chunk_text(text: str) -> List[str]:
-    text = text.strip()
-
-    if not text:
+def chunk_text_spans(text: str, base_offset: int = 0) -> List[Dict[str, object]]:
+    if not text.strip():
         return []
 
-    chunks = []
-    start = 0
-    text_length = len(text)
+    chunks: List[Dict[str, object]] = []
+    content_start = len(text) - len(text.lstrip())
+    content_end = len(text.rstrip())
+    start = content_start
 
-    while start < text_length:
-        end = min(start + CHUNK_MAX_CHARS, text_length)
+    while start < content_end:
+        end = min(start + CHUNK_MAX_CHARS, content_end)
 
         # Try to end at a clean newline boundary when possible.
-        if end < text_length:
+        if end < content_end:
             newline_pos = text.rfind("\n", start, end)
             if newline_pos > start + 500:
                 end = newline_pos
 
-        chunk = text[start:end].strip()
+        raw_chunk = text[start:end]
+        left_trim = len(raw_chunk) - len(raw_chunk.lstrip())
+        right_trim = len(raw_chunk.rstrip())
+        chunk = raw_chunk[left_trim:right_trim]
 
         if chunk:
-            chunks.append(chunk)
+            chunks.append(
+                {
+                    "text": chunk,
+                    "char_start": base_offset + start + left_trim,
+                    "char_end": base_offset + start + right_trim,
+                }
+            )
 
-        if end >= text_length:
+        if end >= content_end:
             break
 
-        start = max(0, end - CHUNK_OVERLAP_CHARS)
+        start = max(content_start, end - CHUNK_OVERLAP_CHARS)
 
     return chunks
+
+
+def chunk_text(text: str) -> List[str]:
+    return [str(chunk["text"]) for chunk in chunk_text_spans(text)]
 
 
 # -----------------------------
@@ -199,8 +212,6 @@ def extract_symbols(text: str, language: str) -> List[Dict[str, object]]:
 
 
 def chunk_text_with_symbols(text: str, language: str) -> List[Dict[str, object]]:
-    text = text.strip()
-
     if not text:
         return []
 
@@ -208,15 +219,16 @@ def chunk_text_with_symbols(text: str, language: str) -> List[Dict[str, object]]
 
     # If no symbols were found, fall back to normal overlapping text chunks.
     if not symbols:
-        return [
-            {
-                "text": chunk,
-                "symbol_type": "text_chunk",
-                "symbol_name": None,
-                "symbol_subchunk_index": 0,
-            }
-            for chunk in chunk_text(text)
-        ]
+        chunks = chunk_text_spans(text)
+        for chunk in chunks:
+            chunk.update(
+                {
+                    "symbol_type": "text_chunk",
+                    "symbol_name": None,
+                    "symbol_subchunk_index": 0,
+                }
+            )
+        return chunks
 
     chunks: List[Dict[str, object]] = []
 
@@ -225,10 +237,12 @@ def chunk_text_with_symbols(text: str, language: str) -> List[Dict[str, object]]
     if first_symbol_start > 0:
         preamble = text[:first_symbol_start].strip()
         if preamble:
-            for sub_index, sub_chunk in enumerate(chunk_text(preamble)):
+            for sub_index, sub_chunk in enumerate(
+                chunk_text_spans(text[:first_symbol_start])
+            ):
                 chunks.append(
                     {
-                        "text": sub_chunk,
+                        **sub_chunk,
                         "symbol_type": "file_preamble",
                         "symbol_name": "file_preamble",
                         "symbol_subchunk_index": sub_index,
@@ -239,17 +253,16 @@ def chunk_text_with_symbols(text: str, language: str) -> List[Dict[str, object]]
         start = int(symbol["start"])
         end = int(symbols[i + 1]["start"]) if i + 1 < len(symbols) else len(text)
 
-        symbol_text = text[start:end].strip()
-
-        if not symbol_text:
+        symbol_text = text[start:end]
+        if not symbol_text.strip():
             continue
 
-        sub_chunks = chunk_text(symbol_text)
+        sub_chunks = chunk_text_spans(symbol_text, base_offset=start)
 
         for sub_index, sub_chunk in enumerate(sub_chunks):
             chunks.append(
                 {
-                    "text": sub_chunk,
+                    **sub_chunk,
                     "symbol_type": symbol["symbol_type"],
                     "symbol_name": symbol["symbol_name"],
                     "symbol_subchunk_index": sub_index,
@@ -360,11 +373,24 @@ def index_file(client: QdrantClient, model: SentenceTransformer, repo_root: Path
             continue
 
         embedding = model.encode(chunk_text_value).tolist()
+        char_start = int(chunk.get("char_start") or 0)
+        char_end = int(chunk.get("char_end") or char_start)
+        line_start = text.count("\n", 0, char_start) + 1
+        line_end = text.count("\n", 0, char_end) + 1
+        source_path = canonical_source_path(
+            "code",
+            repo_name=repo,
+            relative_path=relative_path,
+            file_path=file_path,
+        )
 
         payload = {
             "repo": repo,
             "file": str(file_path),
             "relative_path": relative_path,
+            "source_path": source_path,
+            "line_start": line_start,
+            "line_end": line_end,
             "language": language,
             "category": category,
             "symbol_type": chunk.get("symbol_type"),

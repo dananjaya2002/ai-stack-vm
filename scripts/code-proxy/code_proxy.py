@@ -16,6 +16,11 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from proxy_security import install_security_middleware, validate_proxy_environment
 from shared.json_log import append_json_event
 from shared.openai_compat import proxy_completion, upstream_payload
+from shared.source_locations import (
+    canonical_source_path,
+    clean_source_markers,
+    format_source_location,
+)
 from shared.utility_prompts import classify_utility_prompt
 
 
@@ -256,6 +261,21 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
             continue
 
         relative_path = payload.get("relative_path") or payload.get("file") or "unknown"
+        source_path = canonical_source_path(
+            "code",
+            repo_name=payload.get("repo"),
+            relative_path=relative_path,
+            file_path=payload.get("file"),
+            source_path=payload.get("source_path"),
+        )
+        source_location = format_source_location(
+            "code",
+            repo_name=payload.get("repo"),
+            source_path=source_path,
+            line_start=payload.get("line_start"),
+            line_end=payload.get("line_end"),
+            chunk_index=payload.get("chunk_index"),
+        )
 
 
         item = {
@@ -263,6 +283,10 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
             "boosted_score": boosted_score,
             "repo": payload.get("repo"),
             "relative_path": relative_path,
+            "source_path": source_path,
+            "source_location": source_location,
+            "line_start": payload.get("line_start"),
+            "line_end": payload.get("line_end"),
             "language": payload.get("language"),
             "category": payload.get("category", "code"),
             "symbol_type": payload.get("symbol_type", "text_chunk"),
@@ -306,6 +330,9 @@ def search_code(query: str, repo: Optional[str] = None) -> List[Dict[str, Any]]:
                     "boosted_score": x["boosted_score"],
                     "repo": x["repo"],
                     "relative_path": x["relative_path"],
+                    "source_path": x["source_path"],
+                    "line_start": x.get("line_start"),
+                    "line_end": x.get("line_end"),
                     "language": x.get("language"),
                     "category": x.get("category"),
                     "symbol_type": x.get("symbol_type"),
@@ -336,6 +363,7 @@ def build_code_context(chunks: List[Dict[str, Any]]) -> str:
 [CODE CHUNK]
 Repo: {item.get("repo")}
 File: {item.get("relative_path")}
+Location: {item.get("source_location")}
 Language: {item.get("language")}
 Category: {item.get("category")}
 Symbol Type: {item.get("symbol_type")}
@@ -373,6 +401,9 @@ Rules:
 - For implementation tasks, provide a short plan before code.
 - For debugging tasks, explain likely cause and verification command.
 - Mention affected files when possible.
+- Refer to files using the exact Location values from the retrieved context.
+- Cite locations inline. Never use numbered source labels such as [Source 1].
+- Do not add a numbered Sources section.
 - If you suggest commands, keep them specific.
 - If multiple files are involved, explain how they connect.
 
@@ -391,6 +422,7 @@ def call_llm(
     temperature: float = 0.2,
     max_tokens: int = 2048,
     stream: bool = False,
+    source_locations: Optional[List[str]] = None,
 ) -> Any:
     payload = upstream_payload(
         LLM_MODEL,
@@ -414,6 +446,9 @@ def call_llm(
         "code-proxy",
         "code-proxy",
         stream,
+        content_transform=(
+            lambda content: clean_source_markers(content, source_locations or [])
+        ),
     )
 
 
@@ -447,7 +482,10 @@ def ask(req: AskRequest):
     chunks = search_code(req.question, repo=req.repo)
     context = build_code_context(chunks)
     prompt = build_prompt(req.question, context)
-    answer = call_llm(prompt)
+    answer = call_llm(
+        prompt,
+        source_locations=[chunk["source_location"] for chunk in chunks],
+    )
 
     return {
         "question": req.question,
@@ -495,6 +533,7 @@ def chat_completions(req: ChatCompletionRequest):
         temperature=req.temperature or 0.2,
         max_tokens=req.max_tokens or 2048,
         stream=bool(req.stream),
+        source_locations=[chunk["source_location"] for chunk in chunks],
     )
 
     return llm_response

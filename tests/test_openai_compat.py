@@ -47,6 +47,35 @@ class StreamingCompatibilityTests(unittest.TestCase):
         self.assertEqual(events[-1], "data: [DONE]\n\n")
         self.assertTrue(response.closed)
 
+    def test_transforms_content_split_across_stream_events(self):
+        first = {
+            "choices": [{"index": 0, "delta": {"content": "See [Sour"}}],
+        }
+        second = {
+            "choices": [{"index": 0, "delta": {"content": "ce 1]."}}],
+        }
+        response = FakeResponse(
+            [
+                f"data: {json.dumps(first)}",
+                f"data: {json.dumps(second)}",
+                "data: [DONE]",
+            ]
+        )
+        events = list(
+            _stream_events(
+                response,
+                "proxy-1",
+                "code-proxy",
+                lambda content: content.replace("[Source 1]", "`repo/file.py`"),
+            )
+        )
+        chunk = json.loads(events[0][len("data: "):])
+        self.assertEqual(
+            chunk["choices"][0]["delta"]["content"],
+            "See `repo/file.py`.",
+        )
+        self.assertTrue(response.closed)
+
 
 if __name__ == "__main__":
     unittest.main()

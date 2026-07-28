@@ -49,6 +49,12 @@ document order and bypass multi-step planning. Reindex existing memory documents
 after upgrading so the normalized `file_name` payload is available; a legacy
 payload scan remains as a compatibility fallback.
 
+Answers reference code with normalized repository-relative locations such as
+`repo/src/service.py:10-24`. Memory evidence is displayed as a filename only,
+such as `Runbook.md`. Numbered placeholders such as `[Source 1]` are not exposed
+in buffered or streamed responses. Reindex code after upgrading to add accurate
+line ranges; legacy index payloads continue to return path and chunk references.
+
 ## Related Docs
 
 - [Data flow](../architecture/data-flow.md)
