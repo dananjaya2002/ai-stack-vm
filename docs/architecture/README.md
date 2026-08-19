@@ -53,5 +53,6 @@ memory/code content should not be committed to Git.
 
 - [Services](services.md)
 - [Data flow](data-flow.md)
+- [RAG project structure](project-structure.md)
 - [Ports](../ports.md)
 - [Root README](../../README.md)

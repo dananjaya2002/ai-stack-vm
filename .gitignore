@@ -10,21 +10,13 @@ __pycache__/
 # Logs
 *.log
 
-# Memory (optional, depends on your use)
+# Optional local runtime directories. Production/runtime data normally lives
+# under AI_STACK_HOME or in Compose-managed named volumes.
 memory/*
-!memory/README.md
-
-# Ignore all files inside folders
 models/*
 qdrant/*
 python-envs/*
 open-webui/*
-
-# BUT keep README files
-!models/README.md
-!qdrant/README.md
-!python-envs/README.md
-!open-webui/README.md
 
 #environment files
 *.env
@@ -36,3 +28,4 @@ dist/
 
 #agent files
 agents.md
+logs/

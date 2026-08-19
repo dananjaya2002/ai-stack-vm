@@ -13,7 +13,8 @@ FROM docker.io/library/python:3.11-slim
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/src:/app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git gcc build-essential && \
@@ -27,10 +28,9 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 COPY scripts/dashboard/dashboard_api.py ./dashboard_api.py
 COPY --from=frontend-build /frontend/dist ./frontend/dist
-COPY scripts/memory-proxy ./memory-proxy
-COPY scripts/watcher ./watcher
-COPY scripts/shared ./shared
-COPY scripts/config ./config
+COPY src ./src
+COPY config ./config
+COPY config.yaml ./config.yaml
 
 EXPOSE 9100
 

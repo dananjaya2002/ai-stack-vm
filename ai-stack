@@ -1281,11 +1281,11 @@ cmd_index() {
   if [[ "${AI_STACK_INDEX_MODE:-container}" == "host" ]]; then
     case "${target}" in
       memory)
-        python3 "${ROOT_DIR}/scripts/memory-proxy/index_memory.py" "$@"
+        PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 -m ai_stack_rag.ingestion.memory "$@"
         ;;
       code)
         [[ "${1:-}" ]] || fail "usage: ./ai-stack index code <repo-path>"
-        python3 "${ROOT_DIR}/scripts/watcher/index_code.py" "$@"
+        PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 -m ai_stack_rag.ingestion.code "$@"
         ;;
       *)
         fail "usage: ./ai-stack index memory|code"
@@ -1299,15 +1299,15 @@ cmd_index() {
       local memory_target
       memory_target="$(map_memory_path_for_container "${1:-}")"
       if [[ -n "${1:-}" ]]; then
-        run_indexer_container python /app/memory-proxy/index_memory.py "${memory_target}"
+        run_indexer_container python -m ai_stack_rag.ingestion.memory "${memory_target}"
       else
-        run_indexer_container python /app/memory-proxy/index_memory.py
+        run_indexer_container python -m ai_stack_rag.ingestion.memory
       fi
       ;;
     code)
       local code_target
       code_target="$(map_code_path_for_container "${1:-}")"
-      run_indexer_container python /app/watcher/index_code.py "${code_target}"
+      run_indexer_container python -m ai_stack_rag.ingestion.code "${code_target}"
       ;;
     *)
       fail "usage: ./ai-stack index memory|code"
@@ -1320,10 +1320,10 @@ cmd_search() {
   shift || true
   case "${target}" in
     memory)
-      python3 "${ROOT_DIR}/scripts/memory-proxy/search_memory.py" "$@"
+      PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 -m ai_stack_rag.retrieval.memory_cli "$@"
       ;;
     code)
-      python3 "${ROOT_DIR}/scripts/code-proxy/search_code.py" "$@"
+      PYTHONPATH="${ROOT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" python3 -m ai_stack_rag.retrieval.code_cli "$@"
       ;;
     *)
       fail "usage: ./ai-stack search memory|code \"query\""

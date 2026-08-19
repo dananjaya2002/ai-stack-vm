@@ -1,11 +1,15 @@
 import json
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.shared.json_log import append_json_event
-from scripts.shared.log_status import log_stats, read_last_lines
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from ai_stack_rag.utils.json_log import append_json_event
+from ai_stack_rag.utils.log_status import log_stats, read_last_lines
 
 
 class LogStatusTests(unittest.TestCase):

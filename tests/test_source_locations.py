@@ -1,6 +1,11 @@
+import sys
 import unittest
+from pathlib import Path
 
-from scripts.shared.source_locations import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from ai_stack_rag.utils.source_locations import (
     canonical_source_path,
     clean_source_markers,
     format_source_location,

@@ -1,16 +1,13 @@
-import importlib.util
 import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG_LOADER_PATH = ROOT / "scripts" / "shared" / "config_loader.py"
-SPEC = importlib.util.spec_from_file_location("config_loader", CONFIG_LOADER_PATH)
-config_loader = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(config_loader)
+sys.path.insert(0, str(ROOT / "src"))
+from ai_stack_rag.utils import legacy_config as config_loader
 
 
 class ConfigLoaderTests(unittest.TestCase):

@@ -9,6 +9,11 @@ container images, and starts the compose stack.
 
 Full operator and API documentation lives in [`docs/`](docs/README.md).
 
+The Python backend is organized as a modular RAG package under
+`src/ai_stack_rag`. Existing service endpoints, Compose services, and
+`./ai-stack` commands remain compatible. See the
+[RAG project structure](docs/architecture/project-structure.md).
+
 ## Architecture
 
 ```text
@@ -117,10 +122,9 @@ $AI_STACK_HOME/
     `-- code-memory/                 cloned or synced project repos for code RAG
 ```
 
-The repository also has local placeholder folders (`memory/`, `models/`,
-`qdrant/`, `open-webui/`, `python-envs/`) with README files, but compose uses
-named container volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for
-models and memory.
+The source tree does not contain runtime-data placeholders. Compose uses named
+volumes for Qdrant/Open WebUI data and `$AI_STACK_HOME` for models and memory.
+See [Runtime storage](docs/setup/runtime-storage.md).
 
 ## Ports
 
@@ -526,16 +530,16 @@ Search/debug memory:
 
 ```bash
 ./ai-stack search memory "what do we know about deployment?"
-python3 scripts/memory-proxy/search_memory.py "deployment"
 ```
 
 Run the memory watcher directly:
 
 ```bash
-python3 scripts/memory-proxy/watch_memory.py
+MEMORY_DIR="$AI_STACK_HOME/memory/engineering-memory" PYTHONPATH=src \
+  python3 -m ai_stack_rag.ingestion.watch_memory
 ```
 
-The `memory-proxy` container does not run the watcher. Run `watch_memory.py`
+The `memory-proxy` container does not run the watcher. Run the watcher module
 separately if you want automatic re-indexing on file changes.
 
 ## Code RAG
@@ -569,13 +573,13 @@ Search/debug code:
 
 ```bash
 ./ai-stack search code "where is authentication handled?"
-python3 scripts/code-proxy/search_code.py "authentication"
 ```
 
 Run the code watcher directly:
 
 ```bash
-python3 scripts/watcher/watch_code.py "$AI_STACK_HOME/memory/code-memory"
+REPOS_ROOT="$AI_STACK_HOME/memory/code-memory" PYTHONPATH=src \
+  python3 -m ai_stack_rag.ingestion.watch_code
 ```
 
 ## Demo Mode
@@ -814,7 +818,7 @@ Run directly from the service folder:
 
 ```bash
 cd scripts/dashboard
-../../python-envs/dashboard/bin/uvicorn dashboard_api:app --host 0.0.0.0 --port 9100
+PYTHONPATH=../../src ../../python-envs/dashboard/bin/uvicorn dashboard_api:app --host 0.0.0.0 --port 9100
 ```
 
 Run the frontend dev server in another terminal:
@@ -953,7 +957,8 @@ Container logs:
 Proxy log helpers:
 
 ```bash
-python3 scripts/memory-proxy/view_logs.py
+MEMORY_API_LOG_FILE="$AI_STACK_HOME/logs/memory_api.log" PYTHONPATH=src \
+  python3 -m ai_stack_rag.utils.log_cli
 ```
 
 ## Backup
@@ -983,6 +988,8 @@ ai-stack-vm/
 |-- docker-compose.code-proxy.yml    code-proxy + Qdrant convenience compose
 |-- docker-compose.dashboard.yml     optional dashboard API compose
 |-- docker-compose.agentic-rag.yml   agentic-rag Open WebUI connector compose
+|-- config.yaml                      versioned non-secret RAG defaults
+|-- config/                          structured indexing and watcher rules
 |-- docker/
 |   |-- Dockerfile.base
 |   |-- Dockerfile.memory-proxy
@@ -992,18 +999,20 @@ ai-stack-vm/
 |   |-- Dockerfile.watcher-base
 |   `-- Dockerfile.watcher
 |-- scripts/
-|   |-- memory-proxy/
-|   |-- code-proxy/
-|   |-- agentic-rag/
 |   |-- dashboard/                  FastAPI dashboard + React/Vite frontend
-|   `-- watcher/
+|   `-- check_markdown_refs.py
+|-- src/ai_stack_rag/                modular Python RAG package
+|   |-- api/
+|   |-- ingestion/
+|   |-- retrieval/
+|   |-- chunking/
+|   |-- embeddings/
+|   |-- vectordb/
+|   |-- prompts/
+|   |-- llm/
+|   `-- utils/
 |-- docs/
 |-- demo/                            fictional memory and sample repos
-|-- memory/                          runtime placeholder only
-|-- models/
-|-- qdrant/
-|-- open-webui/
-|-- python-envs/
 |-- health-check.sh
 |-- backup-ai-stack.sh
 `-- requirements.txt
@@ -1012,14 +1021,14 @@ ai-stack-vm/
 ## Not Committed To Git
 
 ```text
-models/*          GGUF model files
-memory/*          local memory/runtime content, except memory/README.md
-qdrant/*          local vector database storage, if used
-open-webui/*      local Open WebUI data, if used
-python-envs/*     Python virtual environments
+$AI_STACK_HOME/models/*   GGUF model files
+$AI_STACK_HOME/memory/*   private memory and code repositories
+qdrant_data               Compose-managed Qdrant volume
+open_webui_data            Compose-managed Open WebUI volume
+python-envs/*              optional local Python environments
 *.env             real env files and secrets
 *.log             runtime logs
 ```
 
-The `README.md` placeholder files inside ignored runtime folders are committed
-so the directory purposes remain visible.
+See [Runtime storage](docs/setup/runtime-storage.md) for the authoritative data
+layout and persistence model.

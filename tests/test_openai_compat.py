@@ -1,8 +1,13 @@
 import json
+import sys
 import unittest
+from pathlib import Path
 
-from scripts.shared.document_refs import extract_document_filename
-from scripts.shared.openai_compat import _stream_events
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from ai_stack_rag.utils.document_refs import extract_document_filename
+from ai_stack_rag.llm.openai_compat import _stream_events
 
 
 class FakeResponse:

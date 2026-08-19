@@ -67,7 +67,7 @@ proxy container logs and the `memory_logs` or `code_logs` Compose volume.
 
 Dashboard job and watcher output is temporary. It is kept in memory for live
 viewing and is cleared whenever the dashboard container restarts. The `*.log`
-entry in `scripts/config/code_watch.json` intentionally prevents log writes
+entry in `config/code_watch.json` intentionally prevents log writes
 from triggering code re-indexing; it does not disable proxy logs.
 
 ## Duplicate Dashboard Containers

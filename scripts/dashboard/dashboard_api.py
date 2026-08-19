@@ -24,8 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
-from shared.log_status import log_stats as classify_log_stats, read_last_lines as read_log_lines
+from ai_stack_rag.utils.log_status import log_stats as classify_log_stats, read_last_lines as read_log_lines
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
@@ -110,10 +109,10 @@ CONFIG_PRESENTATION: Dict[str, Dict[str, str]] = {
     "MAX_CONTEXT_CHARS": {"label": "Maximum evidence context", "description": "Maximum combined evidence characters passed to the answer model."},
 }
 
-INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
-INDEX_CODE_SCRIPT = Path(os.getenv("INDEX_CODE_SCRIPT", "/app/watcher/index_code.py"))
-WATCH_MEMORY_SCRIPT = Path(os.getenv("WATCH_MEMORY_SCRIPT", "/app/memory-proxy/watch_memory.py"))
-WATCH_CODE_SCRIPT = Path(os.getenv("WATCH_CODE_SCRIPT", "/app/watcher/watch_code.py"))
+INDEX_MEMORY_MODULE = os.getenv("INDEX_MEMORY_MODULE", "ai_stack_rag.ingestion.memory")
+INDEX_CODE_MODULE = os.getenv("INDEX_CODE_MODULE", "ai_stack_rag.ingestion.code")
+WATCH_MEMORY_MODULE = os.getenv("WATCH_MEMORY_MODULE", "ai_stack_rag.ingestion.watch_memory")
+WATCH_CODE_MODULE = os.getenv("WATCH_CODE_MODULE", "ai_stack_rag.ingestion.watch_code")
 PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
@@ -1245,12 +1244,12 @@ def clone_repo(req: CloneRequest) -> Dict[str, Any]:
 def start_index(req: IndexRequest) -> Dict[str, Any]:
     if req.scope == "engineering":
         target = safe_join(ENGINEERING_MEMORY_DIR, req.target)
-        command = [PYTHON_BIN, str(INDEX_MEMORY_SCRIPT)] + ([] if target == ENGINEERING_MEMORY_DIR else [str(target)])
+        command = [PYTHON_BIN, "-m", INDEX_MEMORY_MODULE] + ([] if target == ENGINEERING_MEMORY_DIR else [str(target)])
         env = index_env("engineering-memory", ENGINEERING_MEMORY_DIR)
         name = f"index engineering {req.target or 'all'}"
     elif req.scope == "code":
         target = safe_join(CODE_MEMORY_DIR, req.target)
-        command = [PYTHON_BIN, str(INDEX_CODE_SCRIPT), str(target)]
+        command = [PYTHON_BIN, "-m", INDEX_CODE_MODULE, str(target)]
         env = index_env("code-memory", CODE_MEMORY_DIR)
         name = f"index code {req.target or 'all'}"
     else:
@@ -1282,17 +1281,17 @@ def get_job(job_id: str) -> Dict[str, Any]:
 @app.post("/api/dashboard/watchers/{scope}/start")
 def start_watcher(scope: str) -> Dict[str, Any]:
     if scope == "engineering":
-        script = WATCH_MEMORY_SCRIPT
+        module = WATCH_MEMORY_MODULE
         watched_path = ENGINEERING_MEMORY_DIR
         env = index_env("engineering-memory", ENGINEERING_MEMORY_DIR)
         env["MEMORY_DIR"] = str(ENGINEERING_MEMORY_DIR)
-        env["INDEX_MEMORY_SCRIPT"] = str(INDEX_MEMORY_SCRIPT)
+        env["INDEX_MEMORY_MODULE"] = INDEX_MEMORY_MODULE
     elif scope == "code":
-        script = WATCH_CODE_SCRIPT
+        module = WATCH_CODE_MODULE
         watched_path = CODE_MEMORY_DIR
         env = index_env("code-memory", CODE_MEMORY_DIR)
         env["REPOS_ROOT"] = str(CODE_MEMORY_DIR)
-        env["INDEX_CODE_SCRIPT"] = str(INDEX_CODE_SCRIPT)
+        env["INDEX_CODE_MODULE"] = INDEX_CODE_MODULE
     else:
         raise HTTPException(status_code=400, detail="scope must be engineering or code")
 
@@ -1305,7 +1304,7 @@ def start_watcher(scope: str) -> Dict[str, Any]:
             raise HTTPException(status_code=409, detail=f"{scope} watcher is already running.")
 
         process = subprocess.Popen(
-            [PYTHON_BIN, str(script)],
+            [PYTHON_BIN, "-m", module],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

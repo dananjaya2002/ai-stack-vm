@@ -21,10 +21,10 @@ services:
       MEMORY_DIR: /memory/engineering-memory
       MEMORY_ROOT: /memory/engineering-memory
       REPOS_ROOT: /memory/code-memory
-      INDEX_MEMORY_SCRIPT: /app/memory-proxy/index_memory.py
-      INDEX_CODE_SCRIPT: /app/watcher/index_code.py
-      WATCH_MEMORY_SCRIPT: /app/memory-proxy/watch_memory.py
-      WATCH_CODE_SCRIPT: /app/watcher/watch_code.py
+      INDEX_MEMORY_MODULE: ai_stack_rag.ingestion.memory
+      INDEX_CODE_MODULE: ai_stack_rag.ingestion.code
+      WATCH_MEMORY_MODULE: ai_stack_rag.ingestion.watch_memory
+      WATCH_CODE_MODULE: ai_stack_rag.ingestion.watch_code
       DASHBOARD_LOG_DIR: /tmp/ai-stack-dashboard
       SECURITY_MODE: ${SECURITY_MODE:-development}
       DASHBOARD_AUTH_MODE: ${DASHBOARD_AUTH_MODE:-auto}
@@ -59,8 +59,8 @@ services:
       MEMORY_DIR: /memory/engineering-memory
       MEMORY_ROOT: /memory/engineering-memory
       REPOS_ROOT: /memory/code-memory
-      INDEX_MEMORY_SCRIPT: /app/memory-proxy/index_memory.py
-      INDEX_CODE_SCRIPT: /app/watcher/index_code.py
+      INDEX_MEMORY_MODULE: ai_stack_rag.ingestion.memory
+      INDEX_CODE_MODULE: ai_stack_rag.ingestion.code
     volumes:
       - ${AI_STACK_HOME}/memory/engineering-memory:/memory/engineering-memory
       - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory

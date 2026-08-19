@@ -25,6 +25,8 @@ Manual setup:
 - [Local development](local-development.md)
 - [Production setup](production.md)
 - [Configuration](configuration.md)
+- [Runtime storage](runtime-storage.md)
+- [Open WebUI runtime settings](open-webui.md)
 
 ## Important Model
 

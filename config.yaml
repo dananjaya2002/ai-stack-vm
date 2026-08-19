@@ -1,0 +1,50 @@
+ingestion:
+  memory_root: /memory
+  code_root: /code-memory
+
+chunking:
+  memory_size: 500
+  code_max_chars: 2200
+  code_overlap_chars: 300
+
+embeddings:
+  model: all-MiniLM-L6-v2
+
+vector_db:
+  host: localhost
+  port: 6333
+  memory_collection: engineering-memory
+  code_collection: code-memory
+
+retrieval:
+  simple_top_k: 6
+  score_threshold: 0.20
+  max_chunks_per_file: 2
+  max_chunk_chars: 4000
+  max_context_chars: 50000
+
+llm:
+  base_url: http://localhost:8082/v1
+  model: qwen2.5-coder-7b-instruct-q4_k_m.gguf
+  timeout_seconds: 300
+
+agentic:
+  enabled: true
+  max_steps: 4
+  initial_subqueries: 3
+  followup_top_k: 4
+  max_total_chunks: 16
+  min_confidence: 0.70
+  top_k_per_query: 3
+
+logging:
+  enabled: true
+  memory_file: /logs/memory/memory_api.log
+  code_file: /logs/code/code_proxy.log
+  agentic_file: /logs/agentic-rag/agentic_rag.log
+
+watchers:
+  memory_rules_file: config/memory_watch.json
+  code_rules_file: config/code_watch.json
+  code_index_rules_file: config/code_index.json
+  agentic_terms_file: config/agentic_rag_terms.json
