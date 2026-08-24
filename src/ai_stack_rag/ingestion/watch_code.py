@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import subprocess
+from threading import Lock
 from pathlib import Path
 
 from watchdog.observers import Observer
@@ -42,6 +43,7 @@ IGNORED_NAMES = require_string_set(CODE_WATCH_CONFIG, "ignored_names", "Code wat
 
 
 pending = {}
+pending_lock = Lock()
 
 
 def should_ignore(path: Path) -> bool:
@@ -106,51 +108,59 @@ def handle_path(raw_path):
     if should_ignore(path):
         return
 
-    pending[str(path)] = time.time()
+    with pending_lock:
+        pending[str(path)] = time.time()
     print(f"⏳ Code change detected: {path}", flush=True)
 
 
 def process_pending():
+    """Drain all debounce-ready paths into one indexer process."""
     now = time.time()
 
-    ready = [
-        path
-        for path, changed_at in list(pending.items())
-        if now - changed_at >= DEBOUNCE_SECONDS
-    ]
-
-    for path in ready:
-        pending.pop(path, None)
-
-        file_path = Path(path)
-
-        if not file_path.exists():
-            print(f"🗑️ Code file missing, skipping direct index: {file_path}", flush=True)
-            continue
-
-        print(f"\n📂 Incremental code indexing → {file_path}\n", flush=True)
-
-        env = os.environ.copy()
-        env["QDRANT_COLLECTION"] = QDRANT_COLLECTION
-
-        result = subprocess.run(
-            [
-                PYTHON_BIN,
-                "-m",
-                INDEX_CODE_MODULE,
-                str(file_path),
-            ],
-            env=env,
-            check=False,
+    with pending_lock:
+        ready = sorted(
+            path
+            for path, changed_at in pending.items()
+            if now - changed_at >= DEBOUNCE_SECONDS
         )
+        for path in ready:
+            pending.pop(path, None)
 
-        if result.returncode != 0:
-            print(
-                f"❌ Code indexing failed for {file_path} with exit code {result.returncode}",
-                flush=True,
-            )
-        else:
-            print(f"✅ Code indexing complete: {file_path}", flush=True)
+    ready_files = [Path(path) for path in ready if Path(path).is_file()]
+
+    if not ready_files:
+        return
+
+    print(
+        f"\nBatch incremental code indexing -> {len(ready_files)} files\n",
+        flush=True,
+    )
+
+    env = os.environ.copy()
+    env["QDRANT_COLLECTION"] = QDRANT_COLLECTION
+
+    result = subprocess.run(
+        [
+            PYTHON_BIN,
+            "-m",
+            INDEX_CODE_MODULE,
+            *(str(file_path) for file_path in ready_files),
+        ],
+        env=env,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        print(
+            f"Batch code indexing failed for {len(ready_files)} files "
+            f"with exit code {result.returncode}",
+            flush=True,
+        )
+    else:
+        print(
+            f"Batch code indexing complete: {len(ready_files)} files",
+            flush=True,
+        )
 
 
 # -----------------------------

@@ -41,6 +41,12 @@ Index a repo:
 ./ai-stack index code "$AI_STACK_HOME/memory/code-memory/<repo-name>"
 ```
 
+The code watcher debounces repository events and sends every file that becomes
+ready in the same window to one incremental indexing process. The embedding
+model and Qdrant client are initialized once for that batch, and each file's
+chunks are embedded together. Changes detected while a batch is running stay
+queued for the next batch.
+
 ## Dashboard Indexing
 
 The dashboard can start full or targeted indexing jobs from the Indexing tab.

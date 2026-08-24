@@ -40,5 +40,32 @@ class EmbeddingProviderTests(unittest.TestCase):
 
         self.assertEqual(calls, [("test-model", "cuda")])
 
+    def test_encodes_multiple_texts_in_one_model_call(self):
+        calls = []
+
+        class FakeSentenceTransformer:
+            def __init__(self, _model_name, *, device):
+                self.device = device
+
+            def encode(self, texts):
+                calls.append(texts)
+                return [[0.1, 0.2], [0.3, 0.4]]
+
+        module = types.ModuleType("sentence_transformers")
+        module.SentenceTransformer = FakeSentenceTransformer
+        previous = sys.modules.get("sentence_transformers")
+        sys.modules["sentence_transformers"] = module
+        try:
+            provider = EmbeddingProvider("test-model", "cpu")
+            vectors = provider.encode_many(["first", "second"])
+        finally:
+            if previous is None:
+                del sys.modules["sentence_transformers"]
+            else:
+                sys.modules["sentence_transformers"] = previous
+
+        self.assertEqual(calls, [["first", "second"]])
+        self.assertEqual(vectors, [[0.1, 0.2], [0.3, 0.4]])
+
 if __name__ == "__main__":
     unittest.main()

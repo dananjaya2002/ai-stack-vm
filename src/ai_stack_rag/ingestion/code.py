@@ -372,7 +372,7 @@ def index_file(client: QdrantClient, model: Any, repo_root: Path, file_path: Pat
 
     delete_existing_file_chunks(client, repo, relative_path)
 
-    points = []
+    prepared_chunks = []
 
     for chunk_index, chunk in enumerate(chunks):
         chunk_text_value = str(chunk.get("text") or "").strip()
@@ -380,8 +380,24 @@ def index_file(client: QdrantClient, model: Any, repo_root: Path, file_path: Pat
         if not chunk_text_value:
             continue
 
-        encoded = model.encode(chunk_text_value)
-        embedding = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
+        prepared_chunks.append((chunk_index, chunk, chunk_text_value))
+
+    if not prepared_chunks:
+        return 0
+
+    embeddings = model.encode_many(
+        [chunk_text_value for _, _, chunk_text_value in prepared_chunks]
+    )
+    if len(embeddings) != len(prepared_chunks):
+        raise RuntimeError(
+            "Embedding provider returned an unexpected number of vectors: "
+            f"expected {len(prepared_chunks)}, received {len(embeddings)}"
+        )
+    points = []
+
+    for (chunk_index, chunk, chunk_text_value), embedding in zip(
+        prepared_chunks, embeddings
+    ):
         char_start = int(chunk.get("char_start") or 0)
         char_end = int(chunk.get("char_end") or char_start)
         line_start = text.count("\n", 0, char_start) + 1
@@ -448,7 +464,7 @@ def collect_files(target: Path) -> List[Path]:
     return files
 
 
-def index_target(target: Path):
+def index_targets(targets: List[Path]):
     print("========================================")
     print("Code indexer starting")
     print("========================================")
@@ -456,7 +472,7 @@ def index_target(target: Path):
     print(f"Collection: {QDRANT_COLLECTION}")
     print(f"Embedding model: {EMBED_MODEL_NAME}")
     print(f"Repos root: {REPOS_ROOT}")
-    print(f"Target: {target}")
+    print(f"Targets: {len(targets)}")
     print("========================================")
 
     model = EmbeddingProvider(EMBED_MODEL_NAME, EMBEDDING_DEVICE)
@@ -465,13 +481,20 @@ def index_target(target: Path):
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
     ensure_collection(client, vector_size)
 
-    target = target.resolve()
+    files_by_path = {}
 
-    if not target.exists():
-        print(f"❌ Target does not exist: {target}")
-        sys.exit(1)
+    for target in targets:
+        target = target.resolve()
 
-    files = collect_files(target)
+        if not target.exists():
+            print(f"❌ Target does not exist: {target}")
+            sys.exit(1)
+
+        for file_path in collect_files(target):
+            resolved_path = file_path.resolve()
+            files_by_path[str(resolved_path)] = resolved_path
+
+    files = [files_by_path[path] for path in sorted(files_by_path)]
 
     print(f"Files selected for indexing: {len(files)}")
 
@@ -493,13 +516,20 @@ def index_target(target: Path):
     print("========================================")
 
 
+def index_target(target: Path):
+    index_targets([target])
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python -m ai_stack_rag.ingestion.code <repo-or-file-path>")
+        print(
+            "  python -m ai_stack_rag.ingestion.code "
+            "<repo-or-file-path> [more-paths ...]"
+        )
         sys.exit(1)
 
-    index_target(Path(sys.argv[1]))
+    index_targets([Path(value) for value in sys.argv[1:]])
 
 
 if __name__ == "__main__":

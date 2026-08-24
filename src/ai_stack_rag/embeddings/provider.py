@@ -25,5 +25,16 @@ class EmbeddingProvider:
         encoded = self._get_model().encode(text)
         return encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
 
+    def encode_many(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+
+        encoded = self._get_model().encode(texts)
+        rows = encoded.tolist() if hasattr(encoded, "tolist") else list(encoded)
+        return [
+            row.tolist() if hasattr(row, "tolist") else list(row)
+            for row in rows
+        ]
+
     def dimension(self) -> int:
         return len(self.encode("vector-size-test"))
