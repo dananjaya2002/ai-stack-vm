@@ -8,6 +8,12 @@ Document memory discovers Markdown, plain text, Python, JSON, YAML, and PDF
 files. PDF text is extracted page by page with `pypdf`. Image-only or scanned
 PDFs need OCR before indexing because they do not contain extractable text.
 
+PDFs are not converted to Markdown and no sidecar file is created. Extracted
+text is held in memory, split into consecutive non-overlapping chunks using the
+configured document chunk size (500 characters by default), embedded, and
+stored in Qdrant with the original PDF path and filename as metadata. The PDF
+on disk is not modified.
+
 Put markdown notes under:
 
 ```text

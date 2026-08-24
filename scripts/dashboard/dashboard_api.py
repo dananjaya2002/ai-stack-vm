@@ -118,6 +118,13 @@ PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
 MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+ENGINEERING_UPLOAD_SUFFIXES = frozenset({".md", ".txt", ".pdf", ".py", ".json", ".yaml", ".yml"})
+CODE_UPLOAD_SUFFIXES = frozenset({
+    ".zip", ".txt", ".py", ".js", ".jsx", ".ts", ".tsx", ".dart", ".java",
+    ".go", ".rs", ".c", ".h", ".cpp", ".hpp", ".cs", ".php", ".rb", ".sh",
+    ".bash", ".zsh", ".yaml", ".yml", ".json", ".md", ".html", ".css", ".scss",
+    ".sql", ".xml", ".toml", ".ini",
+})
 SECURITY_MODE = os.getenv("SECURITY_MODE", "development").strip().lower()
 DASHBOARD_AUTH_MODE = os.getenv("DASHBOARD_AUTH_MODE", "auto").strip().lower()
 DASHBOARD_ADMIN_USERNAME = os.getenv("DASHBOARD_ADMIN_USERNAME", "admin")
@@ -911,6 +918,17 @@ def save_upload(upload: UploadFile, destination_root: Path) -> Dict[str, Any]:
     return {"filename": upload.filename, "path": str(destination.relative_to(destination_root)), "size_bytes": total}
 
 
+def validate_upload_extension(scope: str, filename: str) -> None:
+    allowed = ENGINEERING_UPLOAD_SUFFIXES if scope == "engineering" else CODE_UPLOAD_SUFFIXES
+    suffix = Path(filename).suffix.lower()
+    if suffix not in allowed:
+        supported = ", ".join(sorted(allowed))
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported {scope} upload type '{suffix or '[no extension]'}'. Supported: {supported}",
+        )
+
+
 def extract_zip_safe(zip_path: Path, destination_root: Path) -> List[str]:
     extracted = []
     with zipfile.ZipFile(zip_path) as archive:
@@ -1194,6 +1212,8 @@ def set_log_capture(req: LogCaptureRequest) -> Dict[str, Any]:
 @app.post("/api/dashboard/upload")
 def upload_files(scope: str = Form(...), files: List[UploadFile] = File(...)) -> Dict[str, Any]:
     root = scope_root(scope)
+    for upload in files:
+        validate_upload_extension(scope, upload.filename or "")
     root.mkdir(parents=True, exist_ok=True)
     saved = []
     extracted = []

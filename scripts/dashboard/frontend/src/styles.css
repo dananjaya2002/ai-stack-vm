@@ -37,6 +37,10 @@ select {
   white-space: pre-wrap;
 }
 
+.watcher-terminal {
+  max-height: 24rem;
+}
+
 .recharts-wrapper {
   font-size: 12px;
 }

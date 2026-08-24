@@ -56,6 +56,9 @@ const logSources: Array<{ value: LogSource; label: string }> = [
   { value: "agentic-rag", label: "Agentic RAG" },
 ];
 
+const engineeringUploadTypes = ".md,.txt,.pdf,.py,.json,.yaml,.yml";
+const codeUploadTypes = ".zip,.txt,.py,.js,.jsx,.ts,.tsx,.dart,.java,.go,.rs,.c,.h,.cpp,.hpp,.cs,.php,.rb,.sh,.bash,.zsh,.yaml,.yml,.json,.md,.html,.css,.scss,.sql,.xml,.toml,.ini";
+
 function formatBytes(value?: number | null) {
   if (!value) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
@@ -973,18 +976,26 @@ function FilesTab({
 }
 
 function UploadTab({ onSubmit, result, busy }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; result: string; busy: boolean }) {
+  const [scope, setScope] = useState<Scope>("engineering");
+  const acceptedTypes = scope === "engineering" ? engineeringUploadTypes : codeUploadTypes;
+
   return (
     <div className="grid gap-5 xl:grid-cols-[460px_1fr]">
       <Panel>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Field label="Destination">
-            <select name="scope" className="control">
+            <select name="scope" value={scope} onChange={(event) => setScope(event.target.value as Scope)} className="control">
               <option value="engineering">Document memory</option>
               <option value="code">Code memory</option>
             </select>
           </Field>
           <Field label="Files">
-            <input name="files" type="file" multiple className="control" />
+            <input name="files" type="file" multiple accept={acceptedTypes} className="control" />
+            <span className="text-xs font-normal text-muted">
+              {scope === "engineering"
+                ? "Supported: Markdown, text, PDF, Python, JSON, and YAML."
+                : "Supported: ZIP archives and common source, script, markup, configuration, and text files."}
+            </span>
           </Field>
           <Button disabled={busy} type="submit">Upload</Button>
         </form>
@@ -1141,7 +1152,7 @@ function WatchersTab({
               <Button onClick={() => action(scope, "start")}>Start</Button>
               <Button variant="secondary" onClick={() => action(scope, "stop")}>Stop</Button>
             </div>
-            <pre className="result-box">{JSON.stringify(watcher, null, 2)}</pre>
+            <pre className="result-box watcher-terminal">{JSON.stringify(watcher, null, 2)}</pre>
           </Panel>
         );
       })}

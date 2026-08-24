@@ -71,7 +71,10 @@ code-memory roots.
 Document-memory uploads can be indexed when they are Markdown, plain text,
 Python, JSON, YAML, or text-based PDF files. A successful upload confirms that
 the file was saved; indexing is the separate step that extracts and embeds its
-content.
+content. The browser file picker filters unsupported extensions, and the API
+independently rejects unsupported types with HTTP 415. Code-memory upload
+supports ZIP archives and the source/configuration file extensions shown by the
+dashboard.
 
 ## Repositories, Indexing, Jobs, Watchers
 
