@@ -1,104 +1,95 @@
 # Installation
 
-## Recommended commands
+This guide installs AI Stack VM, starts the core services, and verifies the
+local model and retrieval stack.
+
+## Prerequisites
+
+Use a Linux host with:
+
+- Docker Engine and the Docker Compose plugin
+- `git`, `curl`, and `awk`
+- Enough free space for the selected GGUF model and container images
+- Optional NVIDIA GPU, driver, and container toolkit for GPU mode
+
+Podman is supported for CPU installations. GPU mode requires Docker and a
+working NVIDIA container runtime.
+
+Check the host before installing:
+
+```bash
+git --version
+curl --version
+docker --version
+docker compose version
+```
+
+## Clone the project
+
+```bash
+git clone https://github.com/dananjaya2002/ai-stack-vm.git
+cd ai-stack-vm
+chmod +x ./ai-stack
+```
+
+## Run the installer
+
+Automatic compute selection is recommended:
 
 ```bash
 ./ai-stack install --compute auto
 ```
 
-Use `--compute cpu` for the smallest portable images or `--compute gpu` when an
-NVIDIA GPU must be used. An explicit GPU request fails before model download or
-image build if a prerequisite is unavailable.
-
-Precedence is the command-line option, existing `COMPUTE_MODE`, then `auto`.
-Before backfilling or changing an existing `.env`, the CLI creates a timestamped
-`.env.backup-YYYYMMDD-HHMMSS` copy.
-
-## Installation stages
-
-1. Check `git`, `curl`, `awk`, container engine, and Compose.
-2. Detect hardware and filesystems.
-3. Resolve CPU or NVIDIA backend.
-4. Recommend and select a bundled GGUF model, configure the high-resource
-   preset, or add a custom GGUF model.
-5. Enforce storage minimums.
-6. Create/backfill `.env` and runtime directories.
-7. Resume or download the model.
-8. Build images with the resolved PyTorch backend.
-9. Start the main stack.
-10. Verify Torch identity, CUDA availability/device, and a real embedding.
-
-External build/download output is preserved. `FAIL` outcomes include a direct
-remediation; the installer never offers a continue prompt below a hard storage
-minimum.
-
-## Models and size probing
-
-The bundled 3B and 7B model URLs use authenticated redirects when `HF_TOKEN` is
-set. If HTTP size metadata is unavailable, their verified fallback estimates
-are 2 GiB and 5 GiB. Existing partial-file bytes are subtracted.
-
-For a custom model, set a usable `MODEL_URL`. When the server cannot report its
-size, also set a whole-number estimate:
-
-```env
-MODEL_EXPECTED_SIZE_GB=20
-```
-
-The high-resource preset asks for its direct GGUF URL because the project does
-not bundle a stable download location for it. The custom option also collects
-the model name, filename, runtime profile, optional size estimate, and optional
-SHA-256 checksum. The selection is used for storage validation and then written
-to `.env` before download.
-
-## Add a custom model
-
-Run the interactive model installer and enter a model name plus a direct URL to
-a single GGUF file:
+To force a specific mode:
 
 ```bash
-./ai-stack model add
+./ai-stack install --compute cpu
+./ai-stack install --compute gpu
 ```
 
-The wizard derives the filename, accepts an optional size estimate and SHA-256
-checksum, downloads the file with resume support, and activates it in `.env`.
-It supports GGUF models compatible with llama.cpp; it does not convert model
-formats or combine split GGUF files. To script the operation:
+- `auto` selects GPU mode only when every NVIDIA host and container check
+  succeeds; otherwise it uses CPU mode.
+- `cpu` provides the most portable installation and smallest images.
+- `gpu` requires a working NVIDIA environment and stops if validation fails.
+
+During installation, select one of the listed models or choose the custom-model
+option and provide a direct URL to a llama.cpp-compatible GGUF file. The
+installer checks the host, prepares configuration, downloads the model, builds
+the required images, starts the stack, and verifies inference and embeddings.
+
+Existing `.env` configuration is backed up before it is changed. Existing
+model downloads are preserved and partial downloads are resumed.
+
+## Open the services
+
+When installation completes, open Open WebUI at `http://localhost:8080`.
+
+Start the optional management dashboard:
 
 ```bash
-./ai-stack model add \
-  --name Qwen3-8B-Q4_K_M \
-  --url https://example.invalid/models/Qwen3-8B-Q4_K_M.gguf \
-  --profile vm16 \
-  --size-gb 6 \
-  --yes
+./ai-stack dashboard
 ```
 
-If the stack is already running, load the new model with:
+Then open `http://localhost:9100`.
+
+Use the dashboard to monitor services, upload Markdown notes, manage code
+repositories, run indexing, and control automatic watchers.
+
+![Repository management in the AI Stack VM dashboard](../media/repository-managment.png)
+
+The complete interface and installation flow are shown in the
+[project demo video](https://kavishanportfolio.vercel.app/?project=ai-stack-vm#projects).
+
+## Verify the installation
 
 ```bash
-./ai-stack apply-config
-```
-
-## Manual setup
-
-```bash
-./ai-stack doctor
-./ai-stack init
-./ai-stack model download
-./ai-stack build
-./ai-stack up
 ./ai-stack status
+./ai-stack doctor
 ```
 
-Manual `build` and `up` commands still apply the resolved GPU overlay when
-`PYTORCH_BACKEND` is a CUDA backend.
+## Change compute mode
 
-## Rerunning
-
-The installer preserves existing model files and resumes partial downloads.
-Configuration is backed up before mutation. Rebuilding is required after a
-compute backend change:
+Changing the embedding backend requires rebuilding and restarting the stack:
 
 ```bash
 ./ai-stack compute cpu
@@ -106,9 +97,20 @@ compute backend change:
 ./ai-stack up
 ```
 
-## Related docs
+Use `./ai-stack compute gpu` instead when the NVIDIA prerequisites are ready.
 
-- [Hardware detection](hardware-detection.md)
+## Stop the stack
+
+```bash
+./ai-stack down
+```
+
+## Next steps
+
+- [Configuration](configuration.md)
 - [NVIDIA GPU installation](gpu-installation.md)
 - [Runtime storage](runtime-storage.md)
+- [CLI reference](../cli/ai-stack.md)
+- [Indexing](../operations/indexing.md)
+- [Production hardening](../security/production-hardening.md)
 - [Troubleshooting](../operations/troubleshooting.md)
