@@ -21,6 +21,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.rag-services
       target: code-proxy
+      args:
+        PYTORCH_BACKEND: cpu
     container_name: code-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
@@ -41,6 +43,7 @@ services:
       MAX_CHUNKS_PER_FILE: ${MAX_CHUNKS_PER_FILE:-2}
       MAX_TEXT_PREVIEW_CHARS: ${MAX_TEXT_PREVIEW_CHARS:-1200}
       REPOS_ROOT: /code-memory
+      EMBEDDING_DEVICE: cpu
     ports:
       - "${BIND_HOST:-127.0.0.1}:9001:9001"
     depends_on:

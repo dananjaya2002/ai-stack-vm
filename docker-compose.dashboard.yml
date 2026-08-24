@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.dashboard
+      args:
+        PYTORCH_BACKEND: cpu
     container_name: ai-stack-dashboard
     environment:
       LLAMA_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
@@ -32,6 +34,7 @@ services:
       DASHBOARD_ADMIN_PASSWORD_HASH: ${DASHBOARD_ADMIN_PASSWORD_HASH:-}
       DASHBOARD_SESSION_SECRET: ${DASHBOARD_SESSION_SECRET:-}
       AI_STACK_ENV_FILE: /config/ai-stack.env
+      EMBEDDING_DEVICE: cpu
     ports:
       - "${DASHBOARD_BIND_HOST:-0.0.0.0}:9100:9100"
     volumes:
@@ -49,6 +52,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.dashboard
+      args:
+        PYTORCH_BACKEND: cpu
     environment:
       LLAMA_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
       QDRANT_URL: http://qdrant:6333
@@ -61,6 +66,7 @@ services:
       REPOS_ROOT: /memory/code-memory
       INDEX_MEMORY_MODULE: ai_stack_rag.ingestion.memory
       INDEX_CODE_MODULE: ai_stack_rag.ingestion.code
+      EMBEDDING_DEVICE: cpu
     volumes:
       - ${AI_STACK_HOME}/memory/engineering-memory:/memory/engineering-memory
       - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory

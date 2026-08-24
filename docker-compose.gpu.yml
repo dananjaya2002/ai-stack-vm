@@ -1,0 +1,28 @@
+services:
+  memory-proxy:
+    build:
+      args:
+        PYTORCH_BACKEND: ${PYTORCH_BACKEND}
+    environment:
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  code-proxy:
+    build:
+      args:
+        PYTORCH_BACKEND: ${PYTORCH_BACKEND}
+    environment:
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

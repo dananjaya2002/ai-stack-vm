@@ -3,6 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
+ENV_BACKUP_DONE=0
+# shellcheck source=scripts/lib/compute.sh
+. "${ROOT_DIR}/scripts/lib/compute.sh"
+# shellcheck source=scripts/lib/hardware.sh
+. "${ROOT_DIR}/scripts/lib/hardware.sh"
+# shellcheck source=scripts/lib/env.sh
+. "${ROOT_DIR}/scripts/lib/env.sh"
+# shellcheck source=scripts/lib/compose.sh
+. "${ROOT_DIR}/scripts/lib/compose.sh"
 DEFAULT_MODEL_NAME="Qwen2.5-Coder-3B-Instruct-Q4_K_M"
 DEFAULT_MODEL_FILE="Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
 DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
@@ -19,7 +28,9 @@ ai-stack - local AI stack VM helper
 
 Usage:
   ./ai-stack doctor
-  ./ai-stack install
+  ./ai-stack hardware
+  ./ai-stack compute [status|auto|cpu|gpu]
+  ./ai-stack install [--compute auto|cpu|gpu]
   ./ai-stack init
   ./ai-stack profile laptop|vm16|vm60
   ./ai-stack model list
@@ -55,11 +66,11 @@ info() {
 }
 
 warn() {
-  printf '[ai-stack] warning: %s\n' "$*" >&2
+  printf '[ai-stack] WARN: %s\n' "$*" >&2
 }
 
 fail() {
-  printf '[ai-stack] error: %s\n' "$*" >&2
+  printf '[ai-stack] FAIL: %s\n' "$*" >&2
   exit 1
 }
 
@@ -68,13 +79,13 @@ have() {
 }
 
 compose() {
-  if have docker && docker compose version >/dev/null 2>&1; then
+  if have docker && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     docker compose "$@"
-  elif have docker-compose; then
+  elif have docker && docker info >/dev/null 2>&1 && have docker-compose; then
     docker-compose "$@"
-  elif have podman && podman compose version >/dev/null 2>&1; then
+  elif have podman && podman info >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
     podman compose "$@"
-  elif have podman-compose; then
+  elif have podman && podman info >/dev/null 2>&1 && have podman-compose; then
     podman-compose "$@"
   else
     fail "Compose was not found. Install Docker Compose, podman-compose, or a Podman version with 'podman compose'."
@@ -82,17 +93,46 @@ compose() {
 }
 
 compose_available() {
-  if have docker && docker compose version >/dev/null 2>&1; then
+  if have docker && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     return 0
-  elif have docker-compose; then
+  elif have docker && docker info >/dev/null 2>&1 && have docker-compose; then
     return 0
-  elif have podman && podman compose version >/dev/null 2>&1; then
+  elif have podman && podman info >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
     return 0
-  elif have podman-compose; then
+  elif have podman && podman info >/dev/null 2>&1 && have podman-compose; then
     return 0
   fi
   return 1
 }
+
+compose_backend() {
+  load_env
+  compute_backend_exists "${PYTORCH_BACKEND}" || fail "unsupported PYTORCH_BACKEND=${PYTORCH_BACKEND}; run ./ai-stack compute auto"
+  printf '%s' "${PYTORCH_BACKEND}"
+}
+
+compose_scope() {
+  local scope="$1"
+  shift
+  local backend file scope_files
+  local compose_args=()
+  backend="$(compose_backend)"
+
+  if compute_is_gpu_backend "${backend}" && \
+     ! (have docker && docker info >/dev/null 2>&1 && docker compose version >/dev/null 2>&1); then
+    fail "GPU mode requires the Docker Compose plugin; Podman and legacy docker-compose are CPU-only in this release"
+  fi
+
+  scope_files="$(compose_files_for_scope "${scope}" "${backend}")" || fail "unknown Compose scope: ${scope}"
+  while IFS= read -r file; do
+    compose_args+=(-f "${file}")
+  done <<< "${scope_files}"
+  compose "${compose_args[@]}" "$@"
+}
+
+compose_main() { compose_scope main "$@"; }
+compose_dashboard() { compose_scope dashboard "$@"; }
+compose_agentic() { compose_scope agentic "$@"; }
 
 load_env() {
   local model_url_was_set=0
@@ -138,6 +178,10 @@ load_env() {
   CODE_COLLECTION="${CODE_COLLECTION:-code-memory}"
   LLM_BASE_URL="${LLM_BASE_URL:-http://vm-llama:8082/v1}"
   EMBED_MODEL_NAME="${EMBED_MODEL_NAME:-all-MiniLM-L6-v2}"
+  COMPUTE_MODE="${COMPUTE_MODE:-auto}"
+  PYTORCH_BACKEND="${PYTORCH_BACKEND:-cpu}"
+  EMBEDDING_DEVICE="${EMBEDDING_DEVICE:-cpu}"
+  MODEL_EXPECTED_SIZE_GB="${MODEL_EXPECTED_SIZE_GB:-}"
   HF_TOKEN="${HF_TOKEN:-}"
   MEMORY_API_LOGS="${MEMORY_API_LOGS:-true}"
   MEMORY_API_LOG_FILE="${MEMORY_API_LOG_FILE:-/logs/memory/memory_api.log}"
@@ -169,24 +213,11 @@ load_env() {
 set_env_var() {
   local key="$1"
   local value="$2"
-  local tmp
-  touch "${ENV_FILE}"
-  tmp="$(mktemp)"
-  awk -v key="${key}" -v value="${value}" '
-    BEGIN { done = 0 }
-    $0 ~ "^" key "=" {
-      print key "=" value
-      done = 1
-      next
-    }
-    { print }
-    END {
-      if (!done) {
-        print key "=" value
-      }
-    }
-  ' "${ENV_FILE}" > "${tmp}"
-  mv "${tmp}" "${ENV_FILE}"
+  if [[ -f "${ENV_FILE}" ]] && grep -Fxq "${key}=${value}" "${ENV_FILE}"; then
+    return 0
+  fi
+  [[ -f "${ENV_FILE}" ]] && backup_env
+  env_set_var "${ENV_FILE}" "${key}" "${value}"
 }
 
 cpu_count() {
@@ -260,63 +291,140 @@ port_status() {
 }
 
 cmd_doctor() {
-  local cpus mem
-  cpus="$(cpu_count)"
-  mem="$(memory_gb)"
+  load_env
+  local failures=0 resolution="ready"
+  detect_resources "${COMPUTE_MODE}" cached
 
-  info "host: $(uname -srm)"
-  info "cpu cores: ${cpus}"
-  info "memory: ${mem} GB"
+  printf 'AI Stack VM Doctor\n==================\n\nHost\n'
+  printf '  OS                 %s\n' "${DETECTED_OS_DESCRIPTION}"
+  printf '  Architecture       %s\n' "${DETECTED_ARCH}"
+  printf '  CPU                %s cores\n' "${DETECTED_CPU_CORES}"
+  printf '  RAM                %s GiB total / %s GiB available\n' "${DETECTED_RAM_GB}" "${DETECTED_AVAILABLE_RAM_GB}"
+  printf '  Runtime disk       %s GiB free\n' "${DETECTED_RUNTIME_DISK_FREE_GB}"
+  printf '  Container disk     %s GiB free\n' "${DETECTED_DOCKER_DISK_FREE_GB}"
 
-  if (( cpus < 16 )); then
-    warn "this stack is tuned for a larger VM; detected ${cpus} cores"
-  fi
-  if (( mem < 32 )); then
-    warn "40 GB RAM is recommended for the default model; detected ${mem} GB"
-  fi
-
+  printf '\nPrerequisites\n'
+  local bin
   for bin in git curl awk; do
     if have "${bin}"; then
-      info "${bin}: ok"
+      printf '  %-18s OK\n' "${bin}"
     else
-      warn "${bin}: missing"
+      printf '  %-18s MISSING\n' "${bin}"
+      failures=$((failures + 1))
     fi
   done
-
-  if have docker; then
-    info "docker: $(docker --version)"
+  if [[ -n "${DETECTED_CONTAINER_ENGINE}" ]]; then
+    printf '  Container engine   OK (%s)\n' "${DETECTED_CONTAINER_ENGINE}"
   else
-    warn "docker: missing"
+    printf '  Container engine   MISSING\n'
+    failures=$((failures + 1))
+  fi
+  if compose_available; then
+    printf '  Compose             OK\n'
+  else
+    printf '  Compose             MISSING\n'
+    failures=$((failures + 1))
   fi
 
-  if have podman; then
-    info "podman: $(podman --version)"
-  else
-    warn "podman: missing"
-  fi
+  printf '\nGPU\n'
+  printf '  NVIDIA GPU         %s\n' "${DETECTED_GPU_NAME}"
+  printf '  nvidia-smi         %s\n' "${DETECTED_NVIDIA_SMI}"
+  printf '  Driver             %s\n' "${DETECTED_NVIDIA_DRIVER}"
+  printf '  CUDA compatibility %s\n' "${DETECTED_CUDA_COMPATIBILITY}"
+  printf '  Container runtime  %s\n' "${DETECTED_NVIDIA_RUNTIME}"
+  printf '  Container GPU      %s\n' "${DETECTED_CONTAINER_GPU}"
 
-  if have docker && docker compose version >/dev/null 2>&1; then
-    info "docker compose: $(docker compose version)"
-  elif have docker-compose; then
-    info "docker-compose: $(docker-compose --version)"
-  elif have podman && podman compose version >/dev/null 2>&1; then
-    info "podman compose: $(podman compose version)"
-  elif have podman-compose; then
-    info "podman-compose: $(podman-compose --version)"
-  else
-    warn "compose: missing"
+  if ! compute_resolve "${COMPUTE_MODE}" "${DETECTED_GPU_USABLE}" \
+      "${DETECTED_CUDA_COMPATIBILITY}" "${DETECTED_OS}" "${DETECTED_ARCH}" \
+      "${DETECTED_CONTAINER_ENGINE}"; then
+    resolution="${COMPUTE_RESOLUTION_REASON}"
+    failures=$((failures + 1))
   fi
+  printf '\nCompute\n'
+  printf '  Requested mode     %s\n' "${COMPUTE_MODE}"
+  printf '  Configured backend %s\n' "${PYTORCH_BACKEND}"
+  printf '  Recommended now    %s\n' "${COMPUTE_RESOLVED_BACKEND:-unavailable}"
+  printf '  PyTorch version    %s\n' "$(compute_matrix_value PYTORCH_VERSION)"
+  if [[ "${resolution}" != "ready" ]]; then
+    printf '  Resolution         FAIL (%s)\n' "${resolution}"
+  elif [[ -n "${COMPUTE_RESOLUTION_REASON}" ]]; then
+    printf '  Resolution         WARN (%s)\n' "${COMPUTE_RESOLUTION_REASON}"
+  else
+    printf '  Resolution         OK\n'
+  fi
+  cmd_compute_observed main memory-proxy
 
-  for port in 6333 8080 8082 9001 9002 9100; do
-    info "port ${port}: $(port_status "${port}")"
+  printf '\nPorts\n'
+  local port
+  for port in 6333 8080 8082 9001 9002 9100 9200; do
+    printf '  %-18s %s\n' "${port}" "$(port_status "${port}")"
   done
 
-  load_env
+  printf '\nModel\n'
   if [[ -f "${AI_STACK_HOME}/models/${MODEL_FILE}" ]]; then
-    info "model: ${AI_STACK_HOME}/models/${MODEL_FILE}"
+    printf '  File               OK (%s)\n' "${AI_STACK_HOME}/models/${MODEL_FILE}"
   else
-    warn "model missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"
+    printf '  File               MISSING (%s)\n' "${AI_STACK_HOME}/models/${MODEL_FILE}"
   fi
+
+  printf '\nResult\n'
+  if (( failures == 0 )); then
+    printf '  READY\n'
+    return 0
+  fi
+  printf '  NOT READY (%s issue(s))\n' "${failures}"
+  return 1
+}
+
+cmd_hardware() {
+  load_env
+  detect_resources "${COMPUTE_MODE}" cached
+  printf 'AI Stack VM Hardware\n====================\n'
+  print_detected_resources
+  printf 'Compose: %s\n' "$(compose_available && printf 'available' || printf 'not detected')"
+  printf 'Ports:'
+  local port
+  for port in 6333 8080 8082 9001 9002 9100 9200; do
+    printf ' %s=%s' "${port}" "$(port_status "${port}")"
+  done
+  printf '\n'
+}
+
+cmd_compute_observed() {
+  local scope="${1:-main}"
+  local service="${2:-memory-proxy}"
+  if ! compose_available || ! compose_service_exists "${scope}" "${service}"; then
+    printf 'Observed compute: %s is not running\n' "${service}"
+    return 0
+  fi
+  if ! compose_scope "${scope}" exec -T "${service}" python -c \
+      'import os, torch; print(f"Observed compute: wheel_cuda={torch.version.cuda or '\''none'\''} cuda_available={torch.cuda.is_available()} embedding_device={os.getenv('\''EMBEDDING_DEVICE'\'', '\''cpu'\'')}")'; then
+    printf 'Observed compute: unable to inspect %s\n' "${service}"
+  fi
+}
+
+cmd_compute() {
+  local sub="${1:-status}"
+  load_env
+  if [[ "${sub}" == "status" ]]; then
+    printf 'Compute mode: %s\n' "${COMPUTE_MODE}"
+    printf 'PyTorch backend: %s\n' "${PYTORCH_BACKEND}"
+    printf 'Embedding device: %s\n' "${EMBEDDING_DEVICE}"
+    printf 'PyTorch version: %s\n' "$(compute_matrix_value PYTORCH_VERSION)"
+    cmd_compute_observed main memory-proxy
+    return 0
+  fi
+  case "${sub}" in auto|cpu|gpu) ;; *) fail "usage: ./ai-stack compute status|auto|cpu|gpu" ;; esac
+
+  detect_resources "${sub}" pull
+  resolve_compute_selection "${sub}"
+  [[ -f "${ENV_FILE}" ]] && backup_env
+  cmd_init
+  set_env_var COMPUTE_MODE "${SELECTED_COMPUTE_MODE}"
+  set_env_var PYTORCH_BACKEND "${SELECTED_PYTORCH_BACKEND}"
+  set_env_var EMBEDDING_DEVICE "${SELECTED_EMBEDDING_DEVICE}"
+  info "compute configuration updated: mode=${SELECTED_COMPUTE_MODE}, backend=${SELECTED_PYTORCH_BACKEND}, device=${SELECTED_EMBEDDING_DEVICE}"
+  info "rebuild and recreate services to apply the change: ./ai-stack build && ./ai-stack up"
 }
 
 write_root_env() {
@@ -376,6 +484,12 @@ LLAMA_MEMORY_LIMIT=${memory_limit}
 LLAMA_CPU_RESERVATION=4
 LLAMA_MEMORY_RESERVATION=${memory_reservation}
 
+# Embedding compute (llama.cpp remains independently CPU-configured)
+COMPUTE_MODE=auto
+PYTORCH_BACKEND=cpu
+EMBEDDING_DEVICE=cpu
+MODEL_EXPECTED_SIZE_GB=
+
 # Shared retrieval services
 QDRANT_HOST=qdrant
 QDRANT_PORT=6333
@@ -423,6 +537,7 @@ ensure_env_var() {
   local key="$1"
   local value="$2"
   if [[ ! -f "${ENV_FILE}" ]] || ! grep -q "^${key}=" "${ENV_FILE}"; then
+    [[ -f "${ENV_FILE}" ]] && backup_env
     printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
   fi
 }
@@ -440,6 +555,10 @@ ensure_root_env_defaults() {
   ensure_env_var ENABLE_RATE_LIMIT true
   ensure_env_var RATE_LIMIT_PER_MINUTE 60
   ensure_env_var SKIP_UTILITY_PROMPTS true
+  ensure_env_var COMPUTE_MODE auto
+  ensure_env_var PYTORCH_BACKEND cpu
+  ensure_env_var EMBEDDING_DEVICE cpu
+  ensure_env_var MODEL_EXPECTED_SIZE_GB ""
   ensure_env_var QDRANT_HOST qdrant
   ensure_env_var QDRANT_PORT 6333
   ensure_env_var MEMORY_COLLECTION engineering-memory
@@ -535,36 +654,18 @@ cmd_profile() {
 }
 
 detect_resources() {
+  local requested_mode="${1:-auto}"
+  local gpu_probe_policy="${2:-pull}"
   load_env
-  DETECTED_CPU_CORES="$(cpu_count)"
-  DETECTED_RAM_GB="$(memory_gb)"
-  DETECTED_AVAILABLE_RAM_GB="$(available_memory_gb)"
-  DETECTED_DISK_FREE_GB="$(disk_free_gb "${AI_STACK_HOME}")"
-  DETECTED_DISK_FREE_GB="${DETECTED_DISK_FREE_GB:-0}"
-  DETECTED_GPU_NAME="none"
-  DETECTED_GPU_VRAM_GB="0"
-  DETECTED_NVIDIA_TOOLKIT="not detected"
-
-  if have nvidia-smi; then
-    local gpu_line gpu_name gpu_vram_mb
-    gpu_line="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${gpu_line}" ]]; then
-      gpu_name="${gpu_line%,*}"
-      gpu_vram_mb="${gpu_line##*,}"
-      gpu_name="$(printf '%s' "${gpu_name}" | awk '{$1=$1; print}')"
-      gpu_vram_mb="$(printf '%s' "${gpu_vram_mb}" | awk '{$1=$1; print}')"
-      DETECTED_GPU_NAME="${gpu_name}"
-      DETECTED_GPU_VRAM_GB="$(awk -v mb="${gpu_vram_mb}" 'BEGIN { printf "%.0f", mb / 1024 }')"
-    fi
-  fi
-
-  if [[ "${DETECTED_GPU_NAME}" != "none" ]]; then
-    if have docker && docker info 2>/dev/null | grep -qi nvidia; then
-      DETECTED_NVIDIA_TOOLKIT="docker nvidia runtime detected"
-    elif have podman && podman info 2>/dev/null | grep -qi nvidia; then
-      DETECTED_NVIDIA_TOOLKIT="podman nvidia runtime detected"
-    else
-      DETECTED_NVIDIA_TOOLKIT="not detected"
+  hardware_detect_host "${AI_STACK_HOME}"
+  hardware_detect_nvidia_host
+  DETECTED_DISK_FREE_GB="${DETECTED_RUNTIME_DISK_FREE_GB:-0}"
+  DETECTED_GPU_USABLE="false"
+  if [[ "${DETECTED_GPU_NAME}" != "none" && "${requested_mode}" != "cpu" ]]; then
+    if [[ "${gpu_probe_policy}" == "cached" ]] && ! docker image inspect ubuntu:24.04 >/dev/null 2>&1; then
+      DETECTED_CONTAINER_GPU="not tested (probe image is not cached)"
+    elif hardware_probe_container_gpu "$( [[ "${gpu_probe_policy}" == "cached" ]] && printf 'never' || printf 'missing' )"; then
+      DETECTED_GPU_USABLE="true"
     fi
   fi
 }
@@ -574,23 +675,43 @@ recommend_model() {
     RECOMMENDED_MODEL_CHOICE="1"
   elif (( DETECTED_RAM_GB < 32 )); then
     RECOMMENDED_MODEL_CHOICE="2"
-  else
+  elif [[ -n "$(model_url_for_choice 3)" || -f "${AI_STACK_HOME}/models/$(model_file_for_choice 3)" ]]; then
     RECOMMENDED_MODEL_CHOICE="3"
+  else
+    RECOMMENDED_MODEL_CHOICE="2"
   fi
 }
 
 print_detected_resources() {
-  printf '\nDetected system resources:\n\n'
-  printf 'CPU cores: %s\n' "${DETECTED_CPU_CORES}"
-  printf 'RAM: %s GB total, %s GB available\n' "${DETECTED_RAM_GB}" "${DETECTED_AVAILABLE_RAM_GB}"
-  printf 'Disk free: %s GB under %s\n' "${DETECTED_DISK_FREE_GB}" "${AI_STACK_HOME}"
+  printf 'OS: %s (%s)\n' "${DETECTED_OS_DESCRIPTION}" "${DETECTED_ARCH}"
+  printf 'CPU: %s cores\n' "${DETECTED_CPU_CORES}"
+  printf 'RAM: %s GiB total, %s GiB available\n' "${DETECTED_RAM_GB}" "${DETECTED_AVAILABLE_RAM_GB}"
+  printf 'Runtime storage: %s GiB free at %s\n' "${DETECTED_RUNTIME_DISK_FREE_GB}" "${DETECTED_RUNTIME_PATH}"
+  printf 'Container storage: %s GiB free at %s\n' "${DETECTED_DOCKER_DISK_FREE_GB}" "${DETECTED_DOCKER_ROOT}"
+  printf 'Container engine: %s\n' "${DETECTED_CONTAINER_ENGINE_VERSION}"
   if [[ "${DETECTED_GPU_NAME}" == "none" ]]; then
     printf 'GPU: none detected\n'
   else
-    printf 'GPU: %s, %s GB VRAM\n' "${DETECTED_GPU_NAME}" "${DETECTED_GPU_VRAM_GB}"
-    printf 'NVIDIA Container Toolkit: %s\n' "${DETECTED_NVIDIA_TOOLKIT}"
+    printf 'GPU: %s, %s GiB VRAM\n' "${DETECTED_GPU_NAME}" "${DETECTED_GPU_VRAM_GB}"
+    printf 'NVIDIA driver: %s (CUDA compatibility %s)\n' "${DETECTED_NVIDIA_DRIVER}" "${DETECTED_CUDA_COMPATIBILITY}"
+    printf 'NVIDIA runtime: %s; container GPU: %s\n' "${DETECTED_NVIDIA_RUNTIME}" "${DETECTED_CONTAINER_GPU}"
   fi
-  printf '\nRecommended model: %s\n' "$(model_name_for_choice "${RECOMMENDED_MODEL_CHOICE}")"
+}
+
+resolve_compute_selection() {
+  local requested="$1"
+  if ! compute_resolve \
+      "${requested}" \
+      "${DETECTED_GPU_USABLE}" \
+      "${DETECTED_CUDA_COMPATIBILITY}" \
+      "${DETECTED_OS}" \
+      "${DETECTED_ARCH}" \
+      "${DETECTED_CONTAINER_ENGINE}"; then
+    fail "${COMPUTE_RESOLUTION_REASON}. Run ./ai-stack hardware and see docs/setup/gpu-installation.md"
+  fi
+  SELECTED_COMPUTE_MODE="${requested}"
+  SELECTED_PYTORCH_BACKEND="${COMPUTE_RESOLVED_BACKEND}"
+  SELECTED_EMBEDDING_DEVICE="${COMPUTE_RESOLVED_DEVICE}"
 }
 
 prompt_yes_no() {
@@ -605,15 +726,7 @@ prompt_yes_no() {
 
 prompt_model_selection() {
   local choice selected_name
-  print_detected_resources
-
-  if (( DETECTED_DISK_FREE_GB > 0 && DETECTED_DISK_FREE_GB < 20 )); then
-    warn "disk free space is low (${DETECTED_DISK_FREE_GB} GB). Model downloads and container builds may fail."
-    if ! prompt_yes_no "Continue anyway? [y/N]: "; then
-      info "install cancelled"
-      exit 0
-    fi
-  fi
+  printf 'Recommended model: %s\n' "$(model_name_for_choice "${RECOMMENDED_MODEL_CHOICE}")"
 
   while true; do
     cat <<EOF
@@ -656,10 +769,12 @@ EOF
 }
 
 backup_env() {
+  (( ENV_BACKUP_DONE == 0 )) || return 0
   if [[ -f "${ENV_FILE}" ]]; then
     local backup
     backup="${ENV_FILE}.backup-$(date +%Y%m%d-%H%M%S)"
     cp "${ENV_FILE}" "${backup}"
+    ENV_BACKUP_DONE=1
     info "backed up .env to ${backup}"
   fi
 }
@@ -719,8 +834,9 @@ require_install_dependencies() {
     have "${bin}" || fail "${bin} is required for install"
   done
 
-  if ! have docker && ! have podman; then
-    fail "Docker or Podman is required for install"
+  if ! (have docker && docker info >/dev/null 2>&1) && \
+     ! (have podman && podman info >/dev/null 2>&1); then
+    fail "a running Docker or Podman engine is required for install"
   fi
 
   if ! compose_available; then
@@ -729,43 +845,96 @@ require_install_dependencies() {
 }
 
 install_stack() {
+  local requested_compute="$1"
   local env_existed=0 selected_file selected_url selected_dest
   [[ -f "${ENV_FILE}" ]] && env_existed=1
 
-  cmd_doctor
+  printf 'AI Stack VM Installer\n=====================\n'
+
+  install_stage 1 "Checking host prerequisites"
   require_install_dependencies
-  cmd_init
-  detect_resources
+  info "OK prerequisites available"
+
+  install_stage 2 "Detecting hardware"
+  detect_resources "${requested_compute}" pull
+  print_detected_resources
+
+  install_stage 3 "Selecting compute backend"
+  resolve_compute_selection "${requested_compute}"
+  info "requested: ${requested_compute}"
+  info "selected: ${SELECTED_PYTORCH_BACKEND} (${SELECTED_EMBEDDING_DEVICE})"
+  if [[ -n "${COMPUTE_RESOLUTION_REASON}" ]]; then
+    warn "${COMPUTE_RESOLUTION_REASON}; falling back to CPU"
+  fi
+
+  install_stage 4 "Selecting AI model"
   recommend_model
   prompt_model_selection
 
+  install_stage 5 "Checking storage requirements"
+  storage_preflight "${SELECTED_MODEL_CHOICE}" "${SELECTED_PYTORCH_BACKEND}"
+  info "OK storage preflight passed"
+
+  install_stage 6 "Preparing configuration"
   if (( env_existed == 1 )); then
     backup_env
   fi
-
+  cmd_init
   write_model_env "${SELECTED_MODEL_CHOICE}"
+  set_env_var COMPUTE_MODE "${SELECTED_COMPUTE_MODE}"
+  set_env_var PYTORCH_BACKEND "${SELECTED_PYTORCH_BACKEND}"
+  set_env_var EMBEDDING_DEVICE "${SELECTED_EMBEDDING_DEVICE}"
   load_env
 
   selected_file="${MODEL_FILE}"
   selected_url="${MODEL_URL}"
   selected_dest="${AI_STACK_HOME}/models/${selected_file}"
 
-  if [[ -f "${selected_dest}" ]]; then
-    info "model already exists, skipping download: ${selected_dest}"
+  install_stage 7 "Preparing model"
+  if [[ -f "${selected_dest}" && "${STORAGE_MODEL_REMAINING_GB}" == "0" ]]; then
+    info "SKIP model already exists: ${selected_dest}"
   elif [[ -n "${selected_url}" ]]; then
     cmd_model_download "${selected_url}"
   else
-    warn "MODEL_URL is empty for ${MODEL_NAME}; skipping model download."
-    warn "Set MODEL_URL in .env and run: ./ai-stack model download <url>"
+    fail "MODEL_URL is empty and the selected model is not available locally"
   fi
 
+  install_stage 8 "Building containers"
   cmd_build
+  install_stage 9 "Starting services"
   cmd_up
+  install_stage 10 "Running verification"
   cmd_status
+
+  printf '\nInstallation complete.\n'
+  printf 'Open WebUI: http://localhost:8080\n'
+  printf 'Dashboard: run ./ai-stack dashboard, then open http://localhost:9100\n'
+  printf 'Compute: %s / %s\n' "${PYTORCH_BACKEND}" "${EMBEDDING_DEVICE}"
 }
 
 cmd_install() {
-  install_stack
+  local requested=""
+  load_env
+  while (( $# > 0 )); do
+    case "$1" in
+      --compute)
+        [[ $# -ge 2 ]] || fail "--compute requires auto, cpu, or gpu"
+        requested="$2"
+        shift 2
+        ;;
+      --compute=*) requested="${1#*=}"; shift ;;
+      *) fail "usage: ./ai-stack install [--compute auto|cpu|gpu]" ;;
+    esac
+  done
+  requested="${requested:-${COMPUTE_MODE}}"
+  case "${requested}" in auto|cpu|gpu) ;; *) fail "unsupported compute mode: ${requested}" ;; esac
+  install_stack "${requested}"
+}
+
+install_stage() {
+  local number="$1"
+  local title="$2"
+  printf '\n[%s/10] %s\n' "${number}" "${title}"
 }
 
 available_memory_gb() {
@@ -787,7 +956,13 @@ model_name_for_choice() {
   case "$1" in
     1) printf '%s' "${DEFAULT_MODEL_NAME}" ;;
     2) printf '%s' "${MODEL_7B_NAME}" ;;
-    3) printf '%s' "${VM60_MODEL_NAME}" ;;
+    3)
+      if [[ "${MODEL_PROFILE:-}" == "vm60" && -n "${MODEL_NAME:-}" ]]; then
+        printf '%s' "${MODEL_NAME}"
+      else
+        printf '%s' "${VM60_MODEL_NAME}"
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
@@ -796,7 +971,13 @@ model_file_for_choice() {
   case "$1" in
     1) printf '%s' "${DEFAULT_MODEL_FILE}" ;;
     2) printf '%s' "${MODEL_7B_FILE}" ;;
-    3) printf '%s' "${VM60_MODEL_FILE}" ;;
+    3)
+      if [[ "${MODEL_PROFILE:-}" == "vm60" && -n "${MODEL_FILE:-}" ]]; then
+        printf '%s' "${MODEL_FILE}"
+      else
+        printf '%s' "${VM60_MODEL_FILE}"
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
@@ -805,7 +986,13 @@ model_url_for_choice() {
   case "$1" in
     1) printf '%s' "${DEFAULT_MODEL_URL}" ;;
     2) printf '%s' "${MODEL_7B_URL}" ;;
-    3) printf '%s' "${VM60_MODEL_URL}" ;;
+    3)
+      if [[ "${MODEL_PROFILE:-}" == "vm60" && -n "${MODEL_URL:-}" ]]; then
+        printf '%s' "${MODEL_URL}"
+      else
+        printf '%s' "${VM60_MODEL_URL}"
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
@@ -823,9 +1010,106 @@ model_description_for_choice() {
   case "$1" in
     1) printf 'Best for laptops and low-resource systems. Suggested minimum: 4-6 GB RAM, optional GPU.' ;;
     2) printf 'Best balance for coding and RAG on stronger VMs or workstations. Suggested minimum: 12-16 GB RAM.' ;;
-    3) printf 'High-resource model. Suggested minimum: 32-48 GB RAM or a strong GPU/large VM.' ;;
+    3) printf 'High-resource/custom profile. Requires an existing local file or MODEL_URL plus MODEL_EXPECTED_SIZE_GB when size probing is unavailable.' ;;
     *) return 1 ;;
   esac
+}
+
+model_fallback_size_gb() {
+  case "$1" in
+    1) printf '2' ;;
+    2) printf '5' ;;
+    *) printf '0' ;;
+  esac
+}
+
+remote_file_size_gb() {
+  local url="$1"
+  local headers bytes auth_args=()
+  [[ -n "${url}" ]] || return 1
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    auth_args=(-H "Authorization: Bearer ${HF_TOKEN}")
+  fi
+  headers="$(curl --silent --show-error --fail --location --head "${auth_args[@]}" "${url}" 2>/dev/null || true)"
+  bytes="$(printf '%s\n' "${headers}" | awk '
+    BEGIN { max=0 }
+    tolower($1) == "content-length:" || tolower($1) == "x-linked-size:" {
+      gsub("\\r", "", $2)
+      if (($2 + 0) > max) max=$2 + 0
+    }
+    END { if (max > 0) printf "%.0f", max }
+  ')"
+  [[ -n "${bytes}" ]] || return 1
+  awk -v bytes="${bytes}" 'BEGIN { printf "%d", (bytes + 1073741823) / 1073741824 }'
+}
+
+model_remaining_size_gb() {
+  local choice="$1"
+  local file url dest expected local_bytes local_gb
+  file="$(model_file_for_choice "${choice}")"
+  url="$(model_url_for_choice "${choice}")"
+  dest="${AI_STACK_HOME}/models/${file}"
+  if [[ -z "${url}" ]]; then
+    if [[ -f "${dest}" ]]; then
+      printf '0'
+      return 0
+    fi
+    fail "${file} is not present and its MODEL_URL is empty; configure a valid model URL or choose another model"
+  fi
+
+  expected="${MODEL_EXPECTED_SIZE_GB:-}"
+  if [[ -z "${expected}" ]]; then
+    expected="$(remote_file_size_gb "${url}" || true)"
+  fi
+  if [[ -z "${expected}" || "${expected}" == "0" ]]; then
+    expected="$(model_fallback_size_gb "${choice}")"
+  fi
+  [[ -n "${expected}" && "${expected}" != "0" ]] || fail "could not determine model size; set MODEL_EXPECTED_SIZE_GB before installing"
+  [[ "${expected}" =~ ^[0-9]+$ ]] || fail "MODEL_EXPECTED_SIZE_GB must be a whole number"
+
+  local_bytes=0
+  [[ -f "${dest}" ]] && local_bytes="$(stat -c '%s' "${dest}" 2>/dev/null || printf '0')"
+  local_gb="$(awk -v bytes="${local_bytes}" 'BEGIN { printf "%d", bytes / 1073741824 }')"
+  if (( expected > local_gb )); then
+    printf '%s' "$((expected - local_gb))"
+  else
+    printf '0'
+  fi
+}
+
+storage_preflight() {
+  local choice="$1"
+  local backend="$2"
+  local remaining shared_filesystem=false
+  remaining="$(model_remaining_size_gb "${choice}")"
+  hardware_same_storage_device && shared_filesystem=true
+  hardware_storage_requirements "${remaining}" "${backend}" "${shared_filesystem}"
+
+  STORAGE_MODEL_REMAINING_GB="${remaining}"
+  if [[ "${shared_filesystem}" == "true" ]]; then
+    STORAGE_MINIMUM_GB="${STORAGE_RUNTIME_MIN_GB}"
+    STORAGE_RECOMMENDED_GB="${STORAGE_RUNTIME_RECOMMENDED_GB}"
+    STORAGE_AVAILABLE_GB="${DETECTED_RUNTIME_DISK_FREE_GB:-0}"
+    printf 'Model remaining: %s GiB\n' "${remaining}"
+    printf 'Shared filesystem: %s GiB minimum / %s GiB recommended / %s GiB available\n' \
+      "${STORAGE_MINIMUM_GB}" "${STORAGE_RECOMMENDED_GB}" "${STORAGE_AVAILABLE_GB}"
+    (( STORAGE_AVAILABLE_GB >= STORAGE_MINIMUM_GB )) || fail "insufficient disk space; increase the VM disk or choose a smaller model"
+    if (( STORAGE_AVAILABLE_GB < STORAGE_RECOMMENDED_GB )); then
+      warn "disk space meets the minimum but is below the ${STORAGE_RECOMMENDED_GB} GiB recommendation"
+    fi
+    return 0
+  fi
+
+  printf 'Model remaining: %s GiB\n' "${remaining}"
+  printf 'Runtime filesystem: %s GiB minimum / %s GiB recommended / %s GiB available\n' \
+    "${STORAGE_RUNTIME_MIN_GB}" "${STORAGE_RUNTIME_RECOMMENDED_GB}" "${DETECTED_RUNTIME_DISK_FREE_GB:-0}"
+  printf 'Container filesystem: %s GiB minimum / %s GiB recommended / %s GiB available\n' \
+    "${STORAGE_DOCKER_MIN_GB}" "${STORAGE_DOCKER_RECOMMENDED_GB}" "${DETECTED_DOCKER_DISK_FREE_GB:-0}"
+  (( DETECTED_RUNTIME_DISK_FREE_GB >= STORAGE_RUNTIME_MIN_GB )) || fail "insufficient runtime disk space"
+  (( DETECTED_DOCKER_DISK_FREE_GB >= STORAGE_DOCKER_MIN_GB )) || fail "insufficient container storage space"
+  if (( DETECTED_RUNTIME_DISK_FREE_GB < STORAGE_RUNTIME_RECOMMENDED_GB || DETECTED_DOCKER_DISK_FREE_GB < STORAGE_DOCKER_RECOMMENDED_GB )); then
+    warn "storage meets the minimum but is below the recommended headroom"
+  fi
 }
 
 cmd_init() {
@@ -902,7 +1186,7 @@ cmd_model_download() {
 
 cmd_build() {
   cmd_init
-  compose build
+  compose_main build
 }
 
 cmd_up() {
@@ -912,13 +1196,15 @@ cmd_up() {
     warn "model is missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"
     warn "run ./ai-stack model download before starting vm-llama"
   fi
-  compose up -d
+  compose_main up -d
+  cmd_compute_runtime_verify_with_retry main memory-proxy
 }
 
 cmd_dashboard() {
   cmd_init
   load_env
-  compose -f docker-compose.dashboard.yml up -d --build dashboard
+  compose_dashboard up -d --build dashboard
+  cmd_compute_runtime_verify_with_retry dashboard dashboard
   info "dashboard API: http://localhost:9100/api/dashboard/status"
 }
 
@@ -955,17 +1241,18 @@ cmd_agentic_rag() {
       if ! compose_network_exists; then
         fail "main stack network was not found. Run ./ai-stack up before starting agentic-rag."
       fi
-      compose -f docker-compose.agentic-rag.yml up -d --build agentic-rag
+      compose_agentic up -d --build agentic-rag
+      cmd_compute_runtime_verify_with_retry agentic agentic-rag
       info "agentic-rag API: http://localhost:9200/v1"
       ;;
     down)
-      compose -f docker-compose.agentic-rag.yml down
+      compose_agentic down
       ;;
     status)
       cmd_agentic_rag_status
       ;;
     logs)
-      compose -f docker-compose.agentic-rag.yml logs -f agentic-rag
+      compose_agentic logs -f agentic-rag
       ;;
     *)
       fail "usage: ./ai-stack agentic-rag [up|down|status|logs]"
@@ -974,26 +1261,77 @@ cmd_agentic_rag() {
 }
 
 cmd_down() {
-  compose down
+  compose_main down
 }
 
 cmd_restart() {
-  compose restart "$@"
+  compose_main restart "$@"
 }
 
 cmd_apply_config() {
   cmd_init
   load_env
   info "applying .env configuration without rebuilding images"
-  compose up -d --force-recreate vm-llama memory-proxy code-proxy
-  compose -f docker-compose.agentic-rag.yml up -d --force-recreate agentic-rag
-  compose -f docker-compose.dashboard.yml up -d --force-recreate dashboard
+  compose_main up -d --force-recreate vm-llama memory-proxy code-proxy
+  if compose_agentic ps -a -q agentic-rag 2>/dev/null | grep -q .; then
+    compose_agentic up -d --force-recreate agentic-rag
+  fi
+  if compose_dashboard ps -a -q dashboard 2>/dev/null | grep -q .; then
+    compose_dashboard up -d --force-recreate dashboard
+  fi
   info "configuration applied; run ./ai-stack status after services finish starting"
+}
+
+cmd_compute_runtime_verify() {
+  local scope="$1"
+  local service="$2"
+  local expected_backend expected_device script
+  load_env
+  expected_backend="${PYTORCH_BACKEND}"
+  expected_device="${EMBEDDING_DEVICE}"
+  script='import os, torch
+from ai_stack_rag.embeddings.provider import EmbeddingProvider
+backend = os.environ["PYTORCH_BACKEND_EXPECTED"]
+device = os.environ["EMBEDDING_DEVICE_EXPECTED"]
+is_gpu = backend != "cpu"
+assert (torch.version.cuda is not None) == is_gpu, (backend, torch.version.cuda)
+assert torch.cuda.is_available() == is_gpu, torch.cuda.is_available()
+assert os.environ.get("EMBEDDING_DEVICE", "cpu") == device
+provider = EmbeddingProvider(os.environ.get("EMBED_MODEL_NAME", "all-MiniLM-L6-v2"), device)
+dimension = provider.dimension()
+assert dimension > 0
+gpu_name = torch.cuda.get_device_name(0) if is_gpu else "none"
+print(f"PyTorch={torch.__version__} backend={backend} cuda={torch.version.cuda} available={torch.cuda.is_available()} device={gpu_name} embedding_dimension={dimension}")'
+  compose_scope "${scope}" exec -T \
+    -e "PYTORCH_BACKEND_EXPECTED=${expected_backend}" \
+    -e "EMBEDDING_DEVICE_EXPECTED=${expected_device}" \
+    "${service}" python -c "${script}"
+}
+
+cmd_compute_runtime_verify_with_retry() {
+  local scope="$1"
+  local service="$2"
+  local attempt
+  for attempt in 1 2 3 4 5 6; do
+    if cmd_compute_runtime_verify "${scope}" "${service}"; then
+      return 0
+    fi
+    (( attempt < 6 )) && sleep 5
+  done
+  fail "runtime compute verification failed for ${service}"
+}
+
+compose_service_exists() {
+  local scope="$1"
+  local service="$2"
+  compose_scope "${scope}" ps -a -q "${service}" 2>/dev/null | grep -q .
 }
 
 cmd_status() {
   load_env
-  compose ps
+  compose_main ps
+  info "compute configured: mode=${COMPUTE_MODE}, backend=${PYTORCH_BACKEND}, embedding_device=${EMBEDDING_DEVICE}"
+  cmd_compute_observed main memory-proxy
   local curl_args=(--silent --fail --max-time 3)
   if [[ -n "${AI_STACK_API_KEY}" ]]; then
     curl_args+=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
@@ -1002,8 +1340,7 @@ cmd_status() {
     "qdrant:http://localhost:6333" \
     "llama:http://localhost:8082/v1/models" \
     "code-proxy:http://localhost:9001/v1/models" \
-    "memory-proxy:http://localhost:9002/v1/models" \
-    "agentic-rag:http://localhost:9200/v1/models"; do
+    "memory-proxy:http://localhost:9002/v1/models"; do
     local name="${endpoint%%:*}"
     local url="${endpoint#*:}"
     if curl "${curl_args[@]}" "${url}" >/dev/null; then
@@ -1012,11 +1349,17 @@ cmd_status() {
       warn "${name}: not responding at ${url}"
     fi
   done
-}
-
-auth_header_args() {
-  if [[ -n "${AI_STACK_API_KEY:-}" ]]; then
-    printf '%s\n' "-H" "Authorization: Bearer ${AI_STACK_API_KEY}"
+  if compose_service_exists agentic agentic-rag; then
+    local status_auth_args=()
+    [[ -n "${AI_STACK_API_KEY}" ]] && status_auth_args=(-H "Authorization: Bearer ${AI_STACK_API_KEY}")
+    curl_check "agentic-rag" "http://localhost:9200/v1/models" "${status_auth_args[@]}" || true
+  else
+    info "agentic-rag: not started (optional)"
+  fi
+  if compose_service_exists dashboard dashboard; then
+    curl_check "dashboard" "http://localhost:9100/api/dashboard/status" || true
+  else
+    info "dashboard: not started (optional)"
   fi
 }
 
@@ -1041,6 +1384,7 @@ cmd_smoke() {
   load_env
 
   compose_available || fail "compose is not available"
+  compose_main ps >/dev/null
   [[ -f "${ENV_FILE}" ]] || { warn ".env is missing"; failures=$((failures + 1)); }
   [[ -f "${AI_STACK_HOME}/models/${MODEL_FILE}" ]] || { warn "model file is missing: ${AI_STACK_HOME}/models/${MODEL_FILE}"; failures=$((failures + 1)); }
 
@@ -1196,14 +1540,14 @@ EOF
 cmd_logs() {
   local target="${1:-all}"
   case "${target}" in
-    llama) compose logs -f vm-llama ;;
-    qdrant) compose logs -f qdrant ;;
-    code) compose logs -f code-proxy ;;
-    memory) compose logs -f memory-proxy ;;
-    webui) compose logs -f open-webui ;;
-    dashboard) compose -f docker-compose.dashboard.yml logs -f dashboard ;;
-    agentic-rag) compose -f docker-compose.agentic-rag.yml logs -f agentic-rag ;;
-    all) compose logs -f ;;
+    llama) compose_main logs -f vm-llama ;;
+    qdrant) compose_main logs -f qdrant ;;
+    code) compose_main logs -f code-proxy ;;
+    memory) compose_main logs -f memory-proxy ;;
+    webui) compose_main logs -f open-webui ;;
+    dashboard) compose_dashboard logs -f dashboard ;;
+    agentic-rag) compose_agentic logs -f agentic-rag ;;
+    all) compose_main logs -f ;;
     *) fail "unknown log target: ${target}" ;;
   esac
 }
@@ -1223,7 +1567,7 @@ ensure_indexer_image() {
     return
   fi
   info "building dashboard image for containerized indexing"
-  compose -f docker-compose.dashboard.yml build dashboard
+  compose_dashboard build dashboard
 }
 
 map_memory_path_for_container() {
@@ -1269,7 +1613,7 @@ map_code_path_for_container() {
 
 run_indexer_container() {
   ensure_indexer_image
-  compose -f docker-compose.dashboard.yml run --rm indexer "$@"
+  compose_dashboard run --rm indexer "$@"
 }
 
 cmd_index() {
@@ -1517,6 +1861,8 @@ main() {
   case "${command}" in
     help|-h|--help) usage ;;
     doctor) cmd_doctor "$@" ;;
+    hardware) cmd_hardware "$@" ;;
+    compute) cmd_compute "$@" ;;
     install) cmd_install "$@" ;;
     init) cmd_init "$@" ;;
     profile) cmd_profile "$@" ;;

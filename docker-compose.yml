@@ -23,6 +23,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.rag-services
       target: memory-proxy
+      args:
+        PYTORCH_BACKEND: cpu
     container_name: memory-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
@@ -41,6 +43,7 @@ services:
       MEMORY_TOP_K: ${MEMORY_TOP_K:-5}
       MEMORY_SCORE_THRESHOLD: ${MEMORY_SCORE_THRESHOLD:-0.25}
       HF_TOKEN: ${HF_TOKEN:-}
+      EMBEDDING_DEVICE: cpu
     ports:
       - "${BIND_HOST:-127.0.0.1}:9002:9002"
     depends_on:
@@ -64,6 +67,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.rag-services
       target: code-proxy
+      args:
+        PYTORCH_BACKEND: cpu
     container_name: code-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
@@ -84,6 +89,7 @@ services:
       MAX_CHUNKS_PER_FILE: ${MAX_CHUNKS_PER_FILE:-2}
       MAX_TEXT_PREVIEW_CHARS: ${MAX_TEXT_PREVIEW_CHARS:-1200}
       REPOS_ROOT: /code-memory
+      EMBEDDING_DEVICE: cpu
     ports:
       - "${BIND_HOST:-127.0.0.1}:9001:9001"
     depends_on:
