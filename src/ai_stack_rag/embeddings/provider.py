@@ -5,8 +5,11 @@ from typing import Any
 
 
 class EmbeddingProvider:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str = "cpu") -> None:
+        if device not in {"cpu", "cuda"}:
+            raise ValueError("Embedding device must be 'cpu' or 'cuda'")
         self.model_name = model_name
+        self.device = device
         self._model: Any = None
         self._lock = Lock()
 
@@ -15,7 +18,7 @@ class EmbeddingProvider:
             with self._lock:
                 if self._model is None:
                     from sentence_transformers import SentenceTransformer
-                    self._model = SentenceTransformer(self.model_name)
+                    self._model = SentenceTransformer(self.model_name, device=self.device)
         return self._model
 
     def encode(self, text: str) -> list[float]:

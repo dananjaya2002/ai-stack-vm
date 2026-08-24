@@ -1,5 +1,6 @@
 """Command-line memory retrieval implementation."""
 
+import os
 import sys
 from qdrant_client import QdrantClient
 from ai_stack_rag.embeddings.provider import EmbeddingProvider
@@ -12,7 +13,10 @@ TOP_K = 5
 SCORE_THRESHOLD = 0.6
 
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
-model = EmbeddingProvider("all-MiniLM-L6-v2")
+model = EmbeddingProvider(
+    os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2"),
+    os.getenv("EMBEDDING_DEVICE", "cpu"),
+)
 
 
 def search(query):

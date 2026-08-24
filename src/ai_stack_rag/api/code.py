@@ -50,6 +50,7 @@ CODE_TOP_K = int(os.getenv("CODE_TOP_K", "8"))
 CODE_SCORE_THRESHOLD = float(os.getenv("CODE_SCORE_THRESHOLD", "0.35"))
 
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", SETTINGS.embeddings.model)
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", SETTINGS.embeddings.device)
 
 ENABLE_LOGGING = os.getenv("CODE_PROXY_LOGS", "false").lower() == "true"
 SKIP_UTILITY_PROMPTS = os.getenv("SKIP_UTILITY_PROMPTS", "true").lower() == "true"
@@ -82,7 +83,7 @@ validate_proxy_environment(
 install_security_middleware(app, "code-proxy")
 
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
-embedder = EmbeddingProvider(EMBED_MODEL_NAME)
+embedder = EmbeddingProvider(EMBED_MODEL_NAME, EMBEDDING_DEVICE)
 
 
 class ChatMessage(BaseModel):

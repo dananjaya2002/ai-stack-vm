@@ -65,7 +65,10 @@ def create_app() -> FastAPI:
 
 # INIT
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
-embed_model = EmbeddingProvider(os.getenv("EMBED_MODEL_NAME", SETTINGS.embeddings.model))
+embed_model = EmbeddingProvider(
+    os.getenv("EMBED_MODEL_NAME", SETTINGS.embeddings.model),
+    os.getenv("EMBEDDING_DEVICE", SETTINGS.embeddings.device),
+)
 
 
 # -----------------------------

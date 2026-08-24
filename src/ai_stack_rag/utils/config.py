@@ -27,6 +27,7 @@ class ChunkingSettings:
 @dataclass(frozen=True)
 class EmbeddingSettings:
     model: str = "all-MiniLM-L6-v2"
+    device: str = "cpu"
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ ENV_OVERRIDES: dict[str, tuple[str, str, type]] = {
     "CHUNK_MAX_CHARS": ("chunking", "code_max_chars", int),
     "CHUNK_OVERLAP_CHARS": ("chunking", "code_overlap_chars", int),
     "EMBED_MODEL_NAME": ("embeddings", "model", str),
+    "EMBEDDING_DEVICE": ("embeddings", "device", str),
     "QDRANT_HOST": ("vector_db", "host", str),
     "QDRANT_PORT": ("vector_db", "port", int),
     "MEMORY_COLLECTION": ("vector_db", "memory_collection", str),
@@ -240,6 +242,8 @@ def _validate(settings: Settings) -> None:
         raise ValueError("chunking.code_overlap_chars must be smaller than code_max_chars")
     if not 0 <= settings.agentic.min_confidence <= 1:
         raise ValueError("agentic.min_confidence must be between 0 and 1")
+    if settings.embeddings.device not in {"cpu", "cuda"}:
+        raise ValueError("embeddings.device must be 'cpu' or 'cuda'")
 
 
 def load_legacy_json(path: str | Path) -> dict[str, Any]:

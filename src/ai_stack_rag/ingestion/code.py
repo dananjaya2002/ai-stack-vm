@@ -45,6 +45,7 @@ REPOS_ROOT = Path(
 )
 
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 
 CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "2200"))
 CHUNK_OVERLAP_CHARS = int(os.getenv("CHUNK_OVERLAP_CHARS", "300"))
@@ -458,7 +459,7 @@ def index_target(target: Path):
     print(f"Target: {target}")
     print("========================================")
 
-    model = EmbeddingProvider(EMBED_MODEL_NAME)
+    model = EmbeddingProvider(EMBED_MODEL_NAME, EMBEDDING_DEVICE)
     vector_size = model.dimension()
 
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)

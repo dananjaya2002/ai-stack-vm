@@ -21,6 +21,7 @@ QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "code-memory")
 
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "all-MiniLM-L6-v2")
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 
 # Final number of chunks/files shown to user
 TOP_K = int(os.getenv("CODE_TOP_K", "8"))
@@ -76,7 +77,7 @@ def create_client() -> QdrantClient:
 
 
 def load_embedder() -> EmbeddingProvider:
-    return EmbeddingProvider(EMBED_MODEL_NAME)
+    return EmbeddingProvider(EMBED_MODEL_NAME, EMBEDDING_DEVICE)
 
 
 def print_collection_info(client: QdrantClient) -> bool:

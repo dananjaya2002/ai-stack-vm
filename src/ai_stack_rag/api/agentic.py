@@ -73,6 +73,7 @@ AGENTIC_MIN_CONFIDENCE = env_float("AGENTIC_MIN_CONFIDENCE", str(SETTINGS.agenti
 AGENTIC_TOP_K_PER_QUERY = env_int("AGENTIC_TOP_K_PER_QUERY", str(SETTINGS.agentic.top_k_per_query))
 
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", SETTINGS.embeddings.model)
+EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", SETTINGS.embeddings.device)
 SIMPLE_TOP_K = env_int("SIMPLE_TOP_K", str(SETTINGS.retrieval.simple_top_k))
 SCORE_THRESHOLD = env_float("AGENTIC_SCORE_THRESHOLD", str(SETTINGS.retrieval.score_threshold))
 MAX_CHUNK_CHARS = env_int("MAX_CHUNK_CHARS", str(SETTINGS.retrieval.max_chunk_chars))
@@ -127,7 +128,7 @@ def create_app() -> FastAPI:
     return app
 
 client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
-embedder = EmbeddingProvider(EMBED_MODEL_NAME)
+embedder = EmbeddingProvider(EMBED_MODEL_NAME, EMBEDDING_DEVICE)
 llm_client = OpenAICompatibleClient(LLM_BASE_URL, LLM_MODEL, timeout=300)
 
 

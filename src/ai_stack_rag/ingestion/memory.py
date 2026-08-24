@@ -26,7 +26,7 @@ def _runtime() -> tuple[Path, str, EmbeddingProvider, QdrantStore]:
         "QDRANT_COLLECTION",
         os.getenv("MEMORY_QDRANT_COLLECTION", settings.vector_db.memory_collection),
     )
-    embedder = EmbeddingProvider(settings.embeddings.model)
+    embedder = EmbeddingProvider(settings.embeddings.model, settings.embeddings.device)
     store = QdrantStore(
         settings.vector_db.host,
         settings.vector_db.port,
