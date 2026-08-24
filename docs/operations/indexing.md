@@ -4,6 +4,10 @@ Indexing turns local files into vector-searchable chunks in Qdrant.
 
 ## Engineering Memory
 
+Document memory discovers Markdown, plain text, Python, JSON, YAML, and PDF
+files. PDF text is extracted page by page with `pypdf`. Image-only or scanned
+PDFs need OCR before indexing because they do not contain extractable text.
+
 Put markdown notes under:
 
 ```text

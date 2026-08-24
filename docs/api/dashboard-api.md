@@ -68,6 +68,11 @@ POST   /api/dashboard/upload
 File operations are constrained to the mounted engineering-memory and
 code-memory roots.
 
+Document-memory uploads can be indexed when they are Markdown, plain text,
+Python, JSON, YAML, or text-based PDF files. A successful upload confirms that
+the file was saved; indexing is the separate step that extracts and embeds its
+content.
+
 ## Repositories, Indexing, Jobs, Watchers
 
 ```text

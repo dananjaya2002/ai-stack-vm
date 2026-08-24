@@ -55,7 +55,7 @@ def _stream_events(
             raw_content = ""
             emitted_length = 0
             last_event: Dict[str, Any] = {}
-            for raw_line in response.iter_lines(decode_unicode=True):
+            for raw_line in response.iter_lines(decode_unicode=False):
                 if not raw_line:
                     continue
                 if isinstance(raw_line, bytes):
@@ -118,7 +118,7 @@ def _stream_events(
             yield "data: [DONE]\n\n"
             return
 
-        for raw_line in response.iter_lines(decode_unicode=True):
+        for raw_line in response.iter_lines(decode_unicode=False):
             if not raw_line:
                 continue
             if isinstance(raw_line, bytes):

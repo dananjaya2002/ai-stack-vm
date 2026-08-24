@@ -313,7 +313,7 @@ function App() {
       void run("poll", () => refreshCurrentTab(), undefined);
     }, 2000);
     return () => window.clearInterval(poller);
-  }, [activeTab, logSource, fileScope, dashboardUnlocked]);
+  }, [activeTab, logSource, fileScope, filePath, repoPath, dashboardUnlocked]);
 
   useEffect(() => {
     const output = logRef.current;

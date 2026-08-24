@@ -38,6 +38,19 @@ class DocumentReferenceTests(unittest.TestCase):
 
 
 class StreamingCompatibilityTests(unittest.TestCase):
+    def test_decodes_utf8_stream_bytes_without_mojibake(self):
+        upstream = {
+            "choices": [{"index": 0, "delta": {"content": "📋 HTML Structure ✅"}}],
+        }
+        line = f"data: {json.dumps(upstream, ensure_ascii=False)}".encode("utf-8")
+        response = FakeResponse([line, b"data: [DONE]"])
+
+        events = list(_stream_events(response, "proxy-emoji", "memory-proxy"))
+
+        chunk = json.loads(events[0][len("data: "):])
+        self.assertEqual(chunk["choices"][0]["delta"]["content"], "📋 HTML Structure ✅")
+        self.assertTrue(response.closed)
+
     def test_rewrites_chunk_identity_and_finishes_stream(self):
         upstream = {
             "id": "upstream",
