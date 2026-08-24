@@ -6,7 +6,7 @@ Use this section to install, configure, and run AI Stack VM.
 
 ```bash
 chmod +x ./ai-stack
-./ai-stack install
+./ai-stack install --compute auto
 ```
 
 Manual setup:
@@ -22,6 +22,9 @@ Manual setup:
 
 ## Setup Guides
 
+- [Installation](installation.md)
+- [Hardware detection and compute resolution](hardware-detection.md)
+- [NVIDIA GPU installation](gpu-installation.md)
 - [Local development](local-development.md)
 - [Production setup](production.md)
 - [Configuration](configuration.md)
@@ -31,7 +34,7 @@ Manual setup:
 ## Important Model
 
 The root `.env` is the single runtime configuration source. `./ai-stack init`
-creates it if missing and backfills missing keys without overwriting existing
+creates it if missing and backs it up before backfilling or changing existing
 values.
 
 ## Related Docs

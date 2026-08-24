@@ -1,5 +1,32 @@
 # Troubleshooting
 
+## Build Fails With No Space Left While Installing NVIDIA Packages
+
+If a CPU build lists packages such as `nvidia-cuda-runtime`, `nvidia-cudnn`, or
+`nvidia-cublas`, PyTorch was resolved from the default Python package index
+instead of the selected official backend index. Those packages can consume
+several gigabytes and end with `[Errno 28] No space left on device`.
+
+Current images invoke `scripts/install-python-dependencies.sh`: it installs the
+matrix-pinned Torch wheel first, constrains neutral dependency resolution to the
+same exact version, and validates CPU/CUDA wheel identity. After pulling this
+fix, select CPU, inspect storage, and remove failed BuildKit cache if needed:
+
+```bash
+df -h
+docker system df
+docker builder prune
+./ai-stack compute cpu
+./ai-stack build
+```
+
+`docker builder prune` removes unused build cache and asks for confirmation. It
+does not remove named volumes. Do not add `--volumes` to broader prune commands,
+because Qdrant and Open WebUI store persistent data in Docker volumes.
+
+For GPU builds, use `./ai-stack hardware` to confirm container visibility and
+allow the larger GPU container-storage threshold before building.
+
 ## Dashboard Shows Llama Or Qdrant As FAIL
 
 If `./ai-stack status` is healthy but dashboard overview fails, check dashboard

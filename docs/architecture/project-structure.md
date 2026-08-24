@@ -17,8 +17,9 @@ src/ai_stack_rag/
 ```
 
 The service containers, `./ai-stack` commands, dashboard jobs, and watchers use
-package-native module entry points. The `scripts` directory is reserved for the
-dashboard application and repository maintenance helpers.
+package-native module entry points. `scripts/lib/` contains the shared compute,
+hardware, environment, and Compose helpers; `requirements/` contains neutral
+Python dependencies, while `config/pytorch-backends.conf` owns Torch selection.
 
 ## Configuration
 

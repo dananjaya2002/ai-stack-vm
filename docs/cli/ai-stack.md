@@ -2,7 +2,9 @@
 
 ```text
 ./ai-stack doctor
-./ai-stack install
+./ai-stack hardware
+./ai-stack compute status|auto|cpu|gpu
+./ai-stack install [--compute auto|cpu|gpu]
 ./ai-stack init
 ./ai-stack profile laptop|vm16|vm60
 ./ai-stack model list
@@ -32,6 +34,9 @@
 ## Notes
 
 - `init` creates runtime directories and backfills missing `.env` keys.
+- `hardware` prints a read-only host, storage, engine, port, and GPU report.
+- `compute` reports or persists CPU/GPU intent; changes require an image rebuild.
+- `install --compute` has precedence over existing `COMPUTE_MODE`.
 - `dashboard` builds/runs the dashboard service.
 - `agentic-rag` is optional and should be started after the main stack.
 - `status` uses `AI_STACK_API_KEY` automatically when it is set in `.env`.

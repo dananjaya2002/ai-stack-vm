@@ -9,7 +9,8 @@ into architecture, setup, APIs, operations, and production hardening.
 | Goal | Read |
 |---|---|
 | Understand the system design | [Architecture](architecture/README.md) |
-| Install or configure the stack | [Setup](setup/README.md) |
+| Install or configure the stack | [Installation](setup/installation.md) |
+| Select CPU or NVIDIA compute | [Hardware and GPU](setup/hardware-detection.md) |
 | Run production login/API-key mode | [Production setup](setup/production.md) |
 | Call the OpenAI-compatible APIs | [API reference](api/README.md) |
 | Try demo data and sample requests | [Examples](examples/README.md) |
