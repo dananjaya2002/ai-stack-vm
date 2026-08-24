@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+qdrant-client
+sentence-transformers
+transformers
+huggingface-hub
+numpy
+pydantic
+PyYAML>=6.0
+python-dotenv
+requests
+httpx
+watchdog
+tqdm

@@ -1,0 +1,5 @@
+fastapi
+httpx
+qdrant-client
+PyYAML>=6.0
+requests
