@@ -6,7 +6,6 @@ transformers
 huggingface-hub
 numpy
 pydantic
-pypdf>=5.0
 PyYAML>=6.0
 python-dotenv
 requests

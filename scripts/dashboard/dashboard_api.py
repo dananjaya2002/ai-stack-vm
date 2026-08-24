@@ -118,7 +118,7 @@ PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
 MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
-ENGINEERING_UPLOAD_SUFFIXES = frozenset({".md", ".txt", ".pdf", ".py", ".json", ".yaml", ".yml"})
+ENGINEERING_UPLOAD_SUFFIXES = frozenset({".md"})
 CODE_UPLOAD_SUFFIXES = frozenset({
     ".zip", ".txt", ".py", ".js", ".jsx", ".ts", ".tsx", ".dart", ".java",
     ".go", ".rs", ".c", ".h", ".cpp", ".hpp", ".cs", ".php", ".rb", ".sh",

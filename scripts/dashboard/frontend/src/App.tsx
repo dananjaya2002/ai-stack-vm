@@ -56,7 +56,7 @@ const logSources: Array<{ value: LogSource; label: string }> = [
   { value: "agentic-rag", label: "Agentic RAG" },
 ];
 
-const engineeringUploadTypes = ".md,.txt,.pdf,.py,.json,.yaml,.yml";
+const engineeringUploadTypes = ".md";
 const codeUploadTypes = ".zip,.txt,.py,.js,.jsx,.ts,.tsx,.dart,.java,.go,.rs,.c,.h,.cpp,.hpp,.cs,.php,.rb,.sh,.bash,.zsh,.yaml,.yml,.json,.md,.html,.css,.scss,.sql,.xml,.toml,.ini";
 
 function formatBytes(value?: number | null) {
@@ -993,7 +993,7 @@ function UploadTab({ onSubmit, result, busy }: { onSubmit: (event: FormEvent<HTM
             <input name="files" type="file" multiple accept={acceptedTypes} className="control" />
             <span className="text-xs font-normal text-muted">
               {scope === "engineering"
-                ? "Supported: Markdown, text, PDF, Python, JSON, and YAML."
+                ? "Supported: Markdown (.md) files only."
                 : "Supported: ZIP archives and common source, script, markup, configuration, and text files."}
             </span>
           </Field>
