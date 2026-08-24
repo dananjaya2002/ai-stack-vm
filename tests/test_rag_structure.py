@@ -31,6 +31,11 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "QDRANT_PORT"):
             load_settings(environ={"QDRANT_PORT": "not-a-port"})
 
+    def test_embedding_device_environment_override_is_validated(self):
+        self.assertEqual(load_settings(environ={"EMBEDDING_DEVICE": "cuda"}).embeddings.device, "cuda")
+        with self.assertRaisesRegex(ValueError, "embeddings.device"):
+            load_settings(environ={"EMBEDDING_DEVICE": "metal"})
+
 
 class PipelineContractTests(unittest.TestCase):
     def test_memory_chunks_keep_exact_boundaries(self):

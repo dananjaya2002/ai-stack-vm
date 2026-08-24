@@ -18,6 +18,13 @@ class APIContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env = {
                 "SECURITY_MODE": "development",
+                "LLM_BASE_URL": "http://llama.test/v1",
+                "LLM_MODEL": "test-model.gguf",
+                "QDRANT_HOST": "qdrant.test",
+                "QDRANT_PORT": "6333",
+                "QDRANT_COLLECTION": "test-collection",
+                "MEMORY_COLLECTION": "test-memory",
+                "CODE_COLLECTION": "test-code",
                 "MEMORY_DIR": directory,
                 "REPOS_ROOT": directory,
                 "AGENTIC_RAG_LOG_FILE": str(Path(directory) / "agentic.log"),
