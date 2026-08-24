@@ -76,6 +76,21 @@ Then open `http://localhost:9100`.
 See the [installation guide](docs/setup/installation.md) for prerequisites,
 verification, and first-use instructions.
 
+### Optional Agentic RAG
+
+Agentic RAG is intentionally provided as a separate optional container and is
+not started by the main installer. After the main stack is running, build and
+start it with:
+
+```bash
+./ai-stack agentic-rag up
+```
+
+Its OpenAI-compatible endpoint is available at
+`http://localhost:9200/v1`. See [Open WebUI connections](docs/examples/open-webui-connections.md)
+to add Agentic RAG, Memory RAG, or Code RAG as a model connection in Open
+WebUI.
+
 ## Architecture
 
 ![AI Stack VM system architecture](docs/media/architecture_diagram.png)
@@ -99,6 +114,9 @@ remain under the operator's control.
 | Code RAG | `http://localhost:9001/v1` | Repository-code retrieval |
 | Qdrant | `http://localhost:6333` | Vector storage |
 | Agentic RAG | `http://localhost:9200/v1` | Optional multi-step retrieval |
+
+Agentic RAG is deployed separately with `./ai-stack agentic-rag up`; it is not
+part of the default installation.
 
 Model, database, and RAG endpoints bind to localhost by default. Open WebUI and
 the dashboard are intended for VM access and must be hardened before exposure

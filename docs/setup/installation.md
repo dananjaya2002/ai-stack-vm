@@ -80,6 +80,34 @@ repositories, run indexing, and control automatic watchers.
 The complete interface and installation flow are shown in the
 [project demo video](https://kavishanportfolio.vercel.app/?project=ai-stack-vm#projects).
 
+## Optional Agentic RAG
+
+Agentic RAG is packaged as a separate optional container, so the standard
+installer does not create or start it. Start the main stack first, then build
+and start Agentic RAG with:
+
+```bash
+./ai-stack agentic-rag up
+```
+
+Verify it at `http://localhost:9200/v1/models` or check its state with:
+
+```bash
+./ai-stack agentic-rag status
+```
+
+To expose Agentic RAG in Open WebUI, add its internal OpenAI-compatible URL,
+`http://agentic-rag:9200/v1`, as a connection. Follow the
+[Open WebUI connections guide](../examples/open-webui-connections.md) for the
+complete Memory RAG, Code RAG, and Agentic RAG connection settings.
+
+Other lifecycle commands are:
+
+```bash
+./ai-stack agentic-rag logs
+./ai-stack agentic-rag down
+```
+
 ## Verify the installation
 
 ```bash
@@ -111,6 +139,7 @@ Use `./ai-stack compute gpu` instead when the NVIDIA prerequisites are ready.
 - [NVIDIA GPU installation](gpu-installation.md)
 - [Runtime storage](runtime-storage.md)
 - [CLI reference](../cli/ai-stack.md)
+- [Open WebUI connections](../examples/open-webui-connections.md)
 - [Indexing](../operations/indexing.md)
 - [Production hardening](../security/production-hardening.md)
 - [Troubleshooting](../operations/troubleshooting.md)
