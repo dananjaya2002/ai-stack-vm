@@ -9,6 +9,7 @@ chunking:
 
 embeddings:
   model: all-MiniLM-L6-v2
+  device: cpu
 
 vector_db:
   host: localhost
