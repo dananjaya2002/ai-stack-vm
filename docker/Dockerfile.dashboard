@@ -12,6 +12,8 @@ FROM docker.io/library/python:3.11-slim
 
 WORKDIR /app
 
+ARG PYTORCH_BACKEND=cpu
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/src:/app
@@ -20,11 +22,15 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git gcc build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-COPY scripts/dashboard/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt && \
+COPY config/pytorch-backends.conf ./config/pytorch-backends.conf
+COPY requirements ./requirements
+COPY scripts/lib/compute.sh ./scripts/lib/compute.sh
+COPY scripts/install-python-dependencies.sh ./scripts/install-python-dependencies.sh
+RUN bash ./scripts/install-python-dependencies.sh \
+      --backend "${PYTORCH_BACKEND}" requirements/dashboard.txt && \
     mkdir -p /root/.cache /tmp/ai-stack-dashboard
 
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', device='cpu')"
 
 COPY scripts/dashboard/dashboard_api.py ./dashboard_api.py
 COPY --from=frontend-build /frontend/dist ./frontend/dist
