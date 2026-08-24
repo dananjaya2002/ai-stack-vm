@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
-  <title id="title">Demo video placeholder</title>
-  <desc id="desc">Placeholder image for a future short demo GIF or video.</desc>
-  <rect width="1280" height="720" fill="#101827"/>
-  <circle cx="640" cy="360" r="92" fill="#1565c0"/>
-  <path d="M615 310 L615 410 L700 360 Z" fill="#ffffff"/>
-  <text x="640" y="530" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="800" fill="#ffffff">Replace with short demo GIF or video thumbnail</text>
-</svg>

@@ -1,12 +1,15 @@
-# Portfolio Media Placeholders
+# Project Media
 
-Replace these placeholders with real captures when the VM route and dashboard are running:
+Screenshots and diagrams used by the project documentation:
 
-- `dashboard-overview-placeholder.svg`
-- `memory-files-placeholder.svg`
-- `repository-browser-placeholder.svg`
-- `indexing-logs-placeholder.svg`
-- `demo-video-placeholder.svg`
+- `architecture_diagram.png` — system architecture
+- `dashboard-overview.png` — service and system overview
+- `repository-managment.png` — repository cloning, updates, and browsing
+- `upload-memory-files.png` — engineering-memory uploads
+- `indexing-logs.png` — indexing output
+- `auto-reindexing-service.png` — watcher controls
+- `rag-answer.png` — retrieval-augmented response
+- `benchmark-results.png` — benchmark output
 
-The architecture diagram is committed as both `architecture-diagram.svg` and
-`architecture-diagram.mmd`.
+Keep documentation references relative so they render on GitHub and in local
+Markdown viewers.
