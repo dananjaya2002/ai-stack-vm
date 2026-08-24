@@ -1,0 +1,76 @@
+# Shared multi-target image for the RAG API services.
+# Build an individual service with, for example:
+#   docker build -f docker/Dockerfile.rag-services --target memory-proxy -t ai-stack/memory-proxy .
+
+FROM docker.io/library/python:3.11-slim AS dependencies
+
+WORKDIR /app
+
+ARG PYTORCH_BACKEND=cpu
+
+# Use one cache location for image build-time downloads and the non-root runtime user.
+ENV HF_HOME=/opt/huggingface \
+    SENTENCE_TRANSFORMERS_HOME=/opt/huggingface/sentence-transformers
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY config/pytorch-backends.conf ./config/pytorch-backends.conf
+COPY requirements ./requirements
+COPY scripts/lib/compute.sh ./scripts/lib/compute.sh
+COPY scripts/install-python-dependencies.sh ./scripts/install-python-dependencies.sh
+RUN bash ./scripts/install-python-dependencies.sh \
+      --backend "${PYTORCH_BACKEND}" requirements/base.txt
+
+RUN useradd -m -u 10001 appuser && \
+    mkdir -p /home/appuser/.cache /opt/huggingface && \
+    chown -R appuser:appuser /app /home/appuser /opt/huggingface
+
+# Pre-download the embedding weights so runtime startup does not depend on a model download.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', device='cpu')"
+RUN chown -R appuser:appuser /opt/huggingface
+
+
+FROM dependencies AS rag-runtime
+
+ENV OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    PYTHONPATH=/app/src:/app
+
+COPY --chown=appuser:appuser src ./src
+COPY --chown=appuser:appuser config ./config
+COPY --chown=appuser:appuser config.yaml ./config.yaml
+
+
+FROM rag-runtime AS memory-proxy
+
+RUN mkdir -p /logs/memory && chown -R appuser:appuser /logs/memory
+
+USER appuser
+EXPOSE 9002
+CMD ["uvicorn", "ai_stack_rag.api.memory:app", "--host", "0.0.0.0", "--port", "9002", "--workers", "4"]
+
+
+FROM rag-runtime AS code-proxy
+
+ENV TOKENIZERS_PARALLELISM=false \
+    PYTHONUNBUFFERED=1
+
+RUN mkdir -p /logs/code && chown -R appuser:appuser /logs/code
+
+USER appuser
+EXPOSE 9001
+CMD ["uvicorn", "ai_stack_rag.api.code:app", "--host", "0.0.0.0", "--port", "9001", "--workers", "1"]
+
+
+FROM rag-runtime AS agentic-rag
+
+ENV TOKENIZERS_PARALLELISM=false \
+    PYTHONUNBUFFERED=1
+
+RUN mkdir -p /logs/agentic-rag && chown -R appuser:appuser /logs/agentic-rag
+
+USER appuser
+EXPOSE 9200
+CMD ["uvicorn", "ai_stack_rag.api.agentic:app", "--host", "0.0.0.0", "--port", "9200", "--workers", "1"]

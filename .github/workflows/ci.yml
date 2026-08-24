@@ -23,10 +23,34 @@ jobs:
           node-version: "20"
 
       - name: Check shell helper syntax
-        run: bash -n ai-stack
+        run: bash -n ai-stack scripts/install-python-dependencies.sh scripts/lib/*.sh tests/test_compute.sh
+
+      - name: Run compute shell tests
+        run: bash tests/test_compute.sh
+
+      - name: Validate compute configuration
+        run: python scripts/validate_compute_config.py
+
+      - name: Render CPU and GPU Compose configurations
+        env:
+          AI_STACK_HOME: /tmp/ai-stack
+          PYTORCH_BACKEND: cu132
+          EMBEDDING_DEVICE: cuda
+        run: |
+          docker compose -f docker-compose.yml config >/dev/null
+          docker compose -f docker-compose.memory-proxy.yml config >/dev/null
+          docker compose -f docker-compose.code-proxy.yml config >/dev/null
+          docker compose -f docker-compose.dashboard.yml config >/dev/null
+          docker compose -f docker-compose.agentic-rag.yml config >/dev/null
+          docker compose -f docker-compose.yml -f docker-compose.gpu.yml config >/dev/null
+          docker compose -f docker-compose.dashboard.yml -f docker-compose.dashboard.gpu.yml config >/dev/null
+          docker compose -f docker-compose.agentic-rag.yml -f docker-compose.agentic-rag.gpu.yml config >/dev/null
 
       - name: Compile Python sources
-        run: python -m compileall scripts
+        run: python -m compileall scripts src
+
+      - name: Install Torch-free Python test dependencies
+        run: python -m pip install --requirement requirements/test.txt
 
       - name: Run Python unit tests
         run: python -m unittest discover -s tests

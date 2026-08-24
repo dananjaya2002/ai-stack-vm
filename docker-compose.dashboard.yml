@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.dashboard
+      args:
+        PYTORCH_BACKEND: cpu
     container_name: ai-stack-dashboard
     environment:
       LLAMA_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
@@ -14,19 +16,25 @@ services:
       CODE_MEMORY_DIR: /memory/code-memory
       MEMORY_LOG: /logs/memory/memory_api.log
       CODE_LOG: /logs/code/code_proxy.log
+      AGENTIC_RAG_LOG: /logs/agentic-rag/agentic_rag.log
+      MEMORY_LOG_ENABLED: ${MEMORY_API_LOGS:-true}
+      CODE_LOG_ENABLED: ${CODE_PROXY_LOGS:-true}
+      AGENTIC_RAG_LOG_ENABLED: ${AGENTIC_RAG_LOGS:-true}
       MEMORY_DIR: /memory/engineering-memory
       MEMORY_ROOT: /memory/engineering-memory
       REPOS_ROOT: /memory/code-memory
-      INDEX_MEMORY_SCRIPT: /app/memory-proxy/index_memory.py
-      INDEX_CODE_SCRIPT: /app/watcher/index_code.py
-      WATCH_MEMORY_SCRIPT: /app/memory-proxy/watch_memory.py
-      WATCH_CODE_SCRIPT: /app/watcher/watch_code.py
+      INDEX_MEMORY_MODULE: ai_stack_rag.ingestion.memory
+      INDEX_CODE_MODULE: ai_stack_rag.ingestion.code
+      WATCH_MEMORY_MODULE: ai_stack_rag.ingestion.watch_memory
+      WATCH_CODE_MODULE: ai_stack_rag.ingestion.watch_code
       DASHBOARD_LOG_DIR: /tmp/ai-stack-dashboard
       SECURITY_MODE: ${SECURITY_MODE:-development}
       DASHBOARD_AUTH_MODE: ${DASHBOARD_AUTH_MODE:-auto}
       DASHBOARD_ADMIN_USERNAME: ${DASHBOARD_ADMIN_USERNAME:-admin}
       DASHBOARD_ADMIN_PASSWORD_HASH: ${DASHBOARD_ADMIN_PASSWORD_HASH:-}
       DASHBOARD_SESSION_SECRET: ${DASHBOARD_SESSION_SECRET:-}
+      AI_STACK_ENV_FILE: /config/ai-stack.env
+      EMBEDDING_DEVICE: cpu
     ports:
       - "${DASHBOARD_BIND_HOST:-0.0.0.0}:9100:9100"
     volumes:
@@ -34,6 +42,9 @@ services:
       - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory
       - memory_logs:/logs/memory
       - code_logs:/logs/code
+      - agentic_rag_logs:/logs/agentic-rag
+      # Compose resolves relative bind mounts from this repository directory.
+      - ./.env:/config/ai-stack.env
     restart: unless-stopped
 
   indexer:
@@ -41,6 +52,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.dashboard
+      args:
+        PYTORCH_BACKEND: cpu
     environment:
       LLAMA_BASE_URL: ${LLM_BASE_URL:-http://vm-llama:8082/v1}
       QDRANT_URL: http://qdrant:6333
@@ -51,8 +64,9 @@ services:
       MEMORY_DIR: /memory/engineering-memory
       MEMORY_ROOT: /memory/engineering-memory
       REPOS_ROOT: /memory/code-memory
-      INDEX_MEMORY_SCRIPT: /app/memory-proxy/index_memory.py
-      INDEX_CODE_SCRIPT: /app/watcher/index_code.py
+      INDEX_MEMORY_MODULE: ai_stack_rag.ingestion.memory
+      INDEX_CODE_MODULE: ai_stack_rag.ingestion.code
+      EMBEDDING_DEVICE: cpu
     volumes:
       - ${AI_STACK_HOME}/memory/engineering-memory:/memory/engineering-memory
       - ${AI_STACK_HOME}/memory/code-memory:/memory/code-memory
@@ -62,3 +76,4 @@ services:
 volumes:
   memory_logs:
   code_logs:
+  agentic_rag_logs:

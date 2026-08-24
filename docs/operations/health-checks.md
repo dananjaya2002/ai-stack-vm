@@ -13,7 +13,7 @@ qdrant: healthy
 llama: healthy
 code-proxy: healthy
 memory-proxy: healthy
-agentic-rag: healthy
+agentic-rag: not started (optional)
 ```
 
 Agentic RAG is optional; it must be started with:
@@ -21,6 +21,16 @@ Agentic RAG is optional; it must be started with:
 ```bash
 ./ai-stack agentic-rag up
 ```
+
+Configured and observed embedding compute can be inspected with:
+
+```bash
+./ai-stack compute status
+```
+
+After `up`, the CLI verifies CPU/CUDA wheel identity, CUDA availability,
+explicit embedding device, and a real embedding. Dashboard and Agentic RAG are
+verified when each optional service starts.
 
 ## Smoke Test
 

@@ -9,6 +9,7 @@ services. The public template is [`.env.example`](../../.env.example).
 |---|---|
 | AI Stack runtime | Runtime root such as `AI_STACK_HOME`. |
 | Model selection | GGUF model name, file, URL, and profile. |
+| Embedding compute | Operator mode, resolved PyTorch backend, embedding device. |
 | Network binding | Host bind settings for service exposure. |
 | Security | Production/development mode, bearer key, rate limits. |
 | Dashboard login | Dashboard username, password hash, session secret. |
@@ -37,7 +38,19 @@ For older `.env` files:
 ./ai-stack init
 ```
 
-This appends missing keys and keeps existing values.
+This backs up `.env`, appends missing keys, and keeps existing values.
+
+## Compute values
+
+```env
+COMPUTE_MODE=auto
+PYTORCH_BACKEND=cpu
+EMBEDDING_DEVICE=cpu
+```
+
+Change these through `./ai-stack compute auto|cpu|gpu`. Do not add a PyTorch
+version to `.env`; `config/pytorch-backends.conf` is authoritative. llama.cpp
+acceleration remains independent from embedding compute.
 
 ## Related Docs
 

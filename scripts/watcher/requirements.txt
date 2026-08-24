@@ -1,6 +1,0 @@
-
-qdrant-client
-sentence-transformers
-watchdog
-tqdm
-requests

@@ -3,13 +3,17 @@ services:
     image: ai-stack/agentic-rag
     build:
       context: .
-      dockerfile: docker/Dockerfile.agentic-rag
+      dockerfile: docker/Dockerfile.rag-services
+      target: agentic-rag
+      args:
+        PYTORCH_BACKEND: cpu
     container_name: agentic-rag
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
       AI_STACK_API_KEY: ${AI_STACK_API_KEY:-}
       ENABLE_RATE_LIMIT: ${ENABLE_RATE_LIMIT:-true}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      SKIP_UTILITY_PROMPTS: ${SKIP_UTILITY_PROMPTS:-true}
       AGENTIC_RAG_LOGS: ${AGENTIC_RAG_LOGS:-true}
       AGENTIC_RAG_LOG_FILE: ${AGENTIC_RAG_LOG_FILE:-/logs/agentic-rag/agentic_rag.log}
       QDRANT_HOST: qdrant
@@ -31,6 +35,7 @@ services:
       AGENTIC_SCORE_THRESHOLD: ${AGENTIC_SCORE_THRESHOLD:-0.20}
       MAX_CHUNK_CHARS: ${MAX_CHUNK_CHARS:-4000}
       MAX_CONTEXT_CHARS: ${MAX_CONTEXT_CHARS:-50000}
+      EMBEDDING_DEVICE: cpu
     ports:
       - "${BIND_HOST:-127.0.0.1}:9200:9200"
     volumes:

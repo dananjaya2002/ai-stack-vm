@@ -1,0 +1,38 @@
+name: Fresh CPU image validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fresh-cpu-images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build CPU images without cache
+        run: |
+          docker build --no-cache --build-arg PYTORCH_BACKEND=cpu -f docker/Dockerfile.rag-services --target memory-proxy -t ai-stack/memory-proxy:cpu .
+          docker build --no-cache --build-arg PYTORCH_BACKEND=cpu -f docker/Dockerfile.rag-services --target code-proxy -t ai-stack/code-proxy:cpu .
+          docker build --no-cache --build-arg PYTORCH_BACKEND=cpu -f docker/Dockerfile.rag-services --target agentic-rag -t ai-stack/agentic-rag:cpu .
+          docker build --no-cache --build-arg PYTORCH_BACKEND=cpu -f docker/Dockerfile.dashboard -t ai-stack/dashboard:cpu .
+
+      - name: Assert CPU-only PyTorch packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in ai-stack/memory-proxy:cpu ai-stack/code-proxy:cpu ai-stack/agentic-rag:cpu ai-stack/dashboard:cpu; do
+            docker run --rm "${image}" python -c "import torch; assert torch.version.cuda is None; assert not torch.cuda.is_available(); print(torch.__version__)"
+            if docker run --rm "${image}" python -m pip list --format=freeze | grep -qi '^nvidia-'; then
+              echo "NVIDIA package found in ${image}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Report image sizes
+        shell: bash
+        run: |
+          for image in ai-stack/memory-proxy:cpu ai-stack/code-proxy:cpu ai-stack/agentic-rag:cpu ai-stack/dashboard:cpu; do
+            bytes="$(docker image inspect "${image}" --format '{{.Size}}')"
+            printf '%-32s %s bytes\n' "${image}" "${bytes}"
+          done

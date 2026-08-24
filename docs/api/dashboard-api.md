@@ -19,9 +19,17 @@ dashboard session cookie.
 ```text
 GET  /api/dashboard/status
 GET  /api/dashboard/settings
-GET  /api/dashboard/logs?source=dashboard|watchers|memory|code
+GET  /api/dashboard/logs?source=dashboard|watchers|memory|code|agentic-rag
+POST /api/dashboard/logs/reset
 POST /api/dashboard/log-capture
+PUT  /api/dashboard/config
+POST /api/dashboard/config/reset
 ```
+
+The configuration response includes friendly labels, descriptions, defaults,
+types, and allowed ranges for dashboard-editable non-secret `.env` values.
+Saving or resetting configuration requires container recreation before the new
+values become active.
 
 `/api/dashboard/status` checks llama.cpp, Qdrant, memory folders, system usage,
 logs, and watcher state.
@@ -59,6 +67,13 @@ POST   /api/dashboard/upload
 
 File operations are constrained to the mounted engineering-memory and
 code-memory roots.
+
+Document-memory upload accepts Markdown (`.md`) files only. A successful upload
+confirms that the file was saved; indexing is the separate step that chunks and
+embeds its content. The browser file picker filters unsupported extensions,
+and the API independently rejects unsupported types with HTTP 415. Code-memory
+upload supports ZIP archives and the source/configuration file extensions shown
+by the dashboard.
 
 ## Repositories, Indexing, Jobs, Watchers
 

@@ -1,6 +1,7 @@
 export type Scope = "engineering" | "code";
 export type TabId = "overview" | "logs" | "files" | "upload" | "repos" | "indexing" | "watchers" | "qdrant" | "settings";
-export type LogSource = "dashboard" | "watchers" | "memory" | "code";
+export type LogSource = "dashboard" | "watchers" | "memory" | "code" | "agentic-rag";
+export type LogState = "available" | "disabled" | "empty" | "unavailable";
 
 export interface AuthStatus {
   required: boolean;
@@ -49,10 +50,12 @@ export interface DashboardStatus {
     ram?: { usage_percent: number; total_bytes: number; available_bytes: number; used_bytes: number };
     disk?: { path: string; usage_percent: number; total_bytes: number; free_bytes: number; used_bytes: number };
   };
-  logs: Record<"memory" | "code", {
+  logs: Record<"memory" | "code" | "agentic-rag", {
     ok: boolean;
     warning?: boolean;
     error?: string | null;
+    state: LogState;
+    enabled: boolean;
     path: string;
     exists: boolean;
     size_bytes: number;
@@ -88,6 +91,9 @@ export interface LogsResponse {
   source: LogSource;
   lines: string[];
   error?: string | null;
+  state: LogState;
+  enabled: boolean;
+  message?: string | null;
 }
 
 export interface Job {
@@ -126,6 +132,20 @@ export interface DashboardSettingsResponse {
   ok: boolean;
   settings: Record<string, string>;
   paths: Record<string, string>;
+  configuration: {
+    values: Record<string, string>;
+    definitions: Record<string, {
+      group: string;
+      label: string;
+      description: string;
+      type: "boolean" | "integer" | "number";
+      default: string;
+      min?: number;
+      max?: number;
+    }>;
+    env_file_available: boolean;
+    restart_required: boolean;
+  };
 }
 
 export interface QdrantCollection {

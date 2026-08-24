@@ -2,11 +2,14 @@
 
 ```text
 ./ai-stack doctor
-./ai-stack install
+./ai-stack hardware
+./ai-stack compute status|auto|cpu|gpu
+./ai-stack install [--compute auto|cpu|gpu]
 ./ai-stack init
 ./ai-stack profile laptop|vm16|vm60
 ./ai-stack model list
 ./ai-stack model path
+./ai-stack model add [options]
 ./ai-stack model use <file.gguf>
 ./ai-stack model download [url]
 ./ai-stack build
@@ -15,6 +18,7 @@
 ./ai-stack agentic-rag [up|down|status|logs]
 ./ai-stack down
 ./ai-stack restart
+./ai-stack apply-config
 ./ai-stack status
 ./ai-stack smoke [production]
 ./ai-stack qdrant collections
@@ -31,9 +35,21 @@
 ## Notes
 
 - `init` creates runtime directories and backfills missing `.env` keys.
+- `hardware` prints a read-only host, storage, engine, port, and GPU report.
+- `compute` reports or persists CPU/GPU intent; changes require an image rebuild.
+- `install --compute` has precedence over existing `COMPUTE_MODE`.
+- The installer's model menu includes a custom GGUF option. The high-resource
+  preset requests its missing download URL instead of relying on the previous
+  `.env`, and every selection updates all model-related `.env` values.
 - `dashboard` builds/runs the dashboard service.
 - `agentic-rag` is optional and should be started after the main stack.
 - `status` uses `AI_STACK_API_KEY` automatically when it is set in `.env`.
+- `model add` opens an interactive wizard for a direct GGUF URL, downloads the
+  file, and activates it in `.env`. Pass `--help` for non-interactive options.
+  The command accepts single-file models compatible with llama.cpp; run
+  `apply-config` afterward to update a running stack.
+- `apply-config` recreates the model, proxy, Agentic RAG, and dashboard containers
+  with the current `.env` values without rebuilding images.
 - `smoke` runs end-to-end curl checks for the stack; `smoke production` also
   verifies bearer auth behavior.
 - `qdrant reset ...` commands require typed confirmation before deleting data.

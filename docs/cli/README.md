@@ -12,16 +12,19 @@ The `./ai-stack` helper is the main operator interface for the project.
 First run:
 
 ```bash
-./ai-stack install
+./ai-stack install --compute auto
 ```
 
 Manual run:
 
 ```bash
 ./ai-stack init
+./ai-stack hardware
+./ai-stack compute status
 ./ai-stack build
 ./ai-stack up
 ./ai-stack dashboard
+./ai-stack apply-config
 ./ai-stack status
 ```
 

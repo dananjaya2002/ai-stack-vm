@@ -1,0 +1,201 @@
+"""Watch code repositories and invoke incremental ingestion."""
+
+import os
+import sys
+import time
+import subprocess
+from threading import Lock
+from pathlib import Path
+
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+from ai_stack_rag.utils.legacy_config import default_config_path, load_json_object, require_string_set
+
+
+# -----------------------------
+# Configuration
+# -----------------------------
+
+REPOS_ROOT = Path(os.getenv("REPOS_ROOT", "/code-memory"))
+
+INDEX_CODE_MODULE = os.getenv("INDEX_CODE_MODULE", "ai_stack_rag.ingestion.code")
+
+PYTHON_BIN = os.getenv("PYTHON_BIN", sys.executable)
+
+QDRANT_COLLECTION = os.getenv(
+    "CODE_QDRANT_COLLECTION",
+    os.getenv("QDRANT_COLLECTION", "code-memory")
+)
+
+DEBOUNCE_SECONDS = int(os.getenv("CODE_WATCH_DEBOUNCE_SECONDS", "5"))
+CODE_WATCH_CONFIG_FILE = default_config_path("CODE_WATCH_CONFIG_FILE", "code_watch.json", __file__)
+CODE_WATCH_CONFIG = load_json_object(CODE_WATCH_CONFIG_FILE, "Code watch")
+
+
+# -----------------------------
+# Ignore rules
+# -----------------------------
+
+IGNORED_DIRS = require_string_set(CODE_WATCH_CONFIG, "ignored_dirs", "Code watch")
+IGNORED_SUFFIXES = require_string_set(CODE_WATCH_CONFIG, "ignored_suffixes", "Code watch", lowercase=True)
+IGNORED_NAMES = require_string_set(CODE_WATCH_CONFIG, "ignored_names", "Code watch")
+
+
+pending = {}
+pending_lock = Lock()
+
+
+def should_ignore(path: Path) -> bool:
+    if set(path.parts).intersection(IGNORED_DIRS):
+        return True
+
+    if path.name in IGNORED_NAMES:
+        return True
+
+    if path.name.startswith(".env"):
+        return True
+
+    if path.name.startswith(".") and path.name not in {".gitignore"}:
+        return True
+
+    if path.suffix.lower() in IGNORED_SUFFIXES:
+        return True
+
+    return False
+
+
+# -----------------------------
+# Watch handler
+# -----------------------------
+
+class CodeChangeHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        handle_event(event)
+
+    def on_created(self, event):
+        handle_event(event)
+
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+
+        dest_path = getattr(event, "dest_path", None)
+        if dest_path:
+            handle_path(dest_path)
+
+    def on_deleted(self, event):
+        if event.is_directory:
+            return
+
+        path = Path(event.src_path)
+        if should_ignore(path):
+            return
+
+        print(f"🗑️ Code file deleted: {path}", flush=True)
+
+
+def handle_event(event):
+    if event.is_directory:
+        return
+
+    handle_path(event.src_path)
+
+
+def handle_path(raw_path):
+    path = Path(raw_path)
+
+    if should_ignore(path):
+        return
+
+    with pending_lock:
+        pending[str(path)] = time.time()
+    print(f"⏳ Code change detected: {path}", flush=True)
+
+
+def process_pending():
+    """Drain all debounce-ready paths into one indexer process."""
+    now = time.time()
+
+    with pending_lock:
+        ready = sorted(
+            path
+            for path, changed_at in pending.items()
+            if now - changed_at >= DEBOUNCE_SECONDS
+        )
+        for path in ready:
+            pending.pop(path, None)
+
+    ready_files = [Path(path) for path in ready if Path(path).is_file()]
+
+    if not ready_files:
+        return
+
+    print(
+        f"\nBatch incremental code indexing -> {len(ready_files)} files\n",
+        flush=True,
+    )
+
+    env = os.environ.copy()
+    env["QDRANT_COLLECTION"] = QDRANT_COLLECTION
+
+    result = subprocess.run(
+        [
+            PYTHON_BIN,
+            "-m",
+            INDEX_CODE_MODULE,
+            *(str(file_path) for file_path in ready_files),
+        ],
+        env=env,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        print(
+            f"Batch code indexing failed for {len(ready_files)} files "
+            f"with exit code {result.returncode}",
+            flush=True,
+        )
+    else:
+        print(
+            f"Batch code indexing complete: {len(ready_files)} files",
+            flush=True,
+        )
+
+
+# -----------------------------
+# Main
+# -----------------------------
+
+def main():
+    print("========================================", flush=True)
+    print("Code watcher", flush=True)
+    print("========================================", flush=True)
+    print(f"Watching code repos: {REPOS_ROOT}", flush=True)
+    print(f"Index module: {INDEX_CODE_MODULE}", flush=True)
+    print(f"Python: {PYTHON_BIN}", flush=True)
+    print(f"Qdrant collection: {QDRANT_COLLECTION}", flush=True)
+    print(f"Debounce seconds: {DEBOUNCE_SECONDS}", flush=True)
+    print("========================================", flush=True)
+
+    if not REPOS_ROOT.exists():
+        print(f"❌ Code repos root does not exist: {REPOS_ROOT}", flush=True)
+        sys.exit(1)
+
+    observer = Observer()
+    observer.schedule(CodeChangeHandler(), str(REPOS_ROOT), recursive=True)
+    observer.start()
+
+    try:
+        while True:
+            process_pending()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n🛑 Stopping code watcher...", flush=True)
+        observer.stop()
+
+    observer.join()
+
+
+if __name__ == "__main__":
+    main()

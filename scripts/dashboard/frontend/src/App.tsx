@@ -40,7 +40,7 @@ const tabs: Array<{ id: TabId; label: string; title: string; subtitle: string }>
   { id: "overview", label: "Overview", title: "Overview", subtitle: "Service health, storage, and system load." },
   { id: "logs", label: "Logs", title: "Logs", subtitle: "Proxy logs plus dashboard job and watcher output." },
   { id: "files", label: "Files", title: "File Browser", subtitle: "Browse memory files and code repository folders." },
-  { id: "upload", label: "Upload", title: "Upload", subtitle: "Add files to engineering or code memory." },
+  { id: "upload", label: "Upload", title: "Upload", subtitle: "Add files to document or code memory." },
   { id: "repos", label: "Repositories", title: "Repositories", subtitle: "Clone, update, and browse code repositories." },
   { id: "indexing", label: "Indexing", title: "Indexing", subtitle: "Run full or targeted indexing jobs." },
   { id: "watchers", label: "Watchers", title: "Watchers", subtitle: "Start and stop automatic reindex watchers." },
@@ -53,7 +53,11 @@ const logSources: Array<{ value: LogSource; label: string }> = [
   { value: "watchers", label: "Watchers" },
   { value: "memory", label: "Memory proxy" },
   { value: "code", label: "Code proxy" },
+  { value: "agentic-rag", label: "Agentic RAG" },
 ];
+
+const engineeringUploadTypes = ".md";
+const codeUploadTypes = ".zip,.txt,.py,.js,.jsx,.ts,.tsx,.dart,.java,.go,.rs,.c,.h,.cpp,.hpp,.cs,.php,.rb,.sh,.bash,.zsh,.yaml,.yml,.json,.md,.html,.css,.scss,.sql,.xml,.toml,.ini";
 
 function formatBytes(value?: number | null) {
   if (!value) return "0 B";
@@ -112,7 +116,7 @@ function Button({
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <label className="grid gap-2 text-sm font-bold text-ink">
       <span>{label}</span>
@@ -238,6 +242,14 @@ function App() {
     markUpdated();
   }
 
+  async function resetLogs() {
+    if (!window.confirm(`Reset all visible ${logSource} logs?`)) return;
+    await run("logs-reset", async () => {
+      await dashboardApi.resetLogs(logSource);
+      await Promise.all([refreshLogs(), refreshStatus()]);
+    }, `${logSource} logs reset.`);
+  }
+
   async function refreshFiles(scope = fileScope, path = filePath) {
     const data = await dashboardApi.files(scope, path);
     setFiles(data.entries || data.files || []);
@@ -304,7 +316,7 @@ function App() {
       void run("poll", () => refreshCurrentTab(), undefined);
     }, 2000);
     return () => window.clearInterval(poller);
-  }, [activeTab, logSource, fileScope, dashboardUnlocked]);
+  }, [activeTab, logSource, fileScope, filePath, repoPath, dashboardUnlocked]);
 
   useEffect(() => {
     const output = logRef.current;
@@ -444,6 +456,21 @@ function App() {
     }
   }
 
+  async function saveConfiguration(values: Record<string, string>) {
+    await run("config-save", async () => {
+      await dashboardApi.updateConfig(values);
+      await refreshSettings();
+    }, "Configuration saved. Recreate the affected containers to apply it.");
+  }
+
+  async function resetConfiguration() {
+    if (!window.confirm("Reset all dashboard-managed variables to their defaults?")) return;
+    await run("config-reset", async () => {
+      await dashboardApi.resetConfig();
+      await refreshSettings();
+    }, "Configuration reset to defaults. Recreate the affected containers to apply it.");
+  }
+
   return (
     <div className="min-h-screen bg-[#eef4f8] text-ink">
       <div className="grid min-h-screen lg:grid-cols-[280px_1fr]">
@@ -515,6 +542,7 @@ function App() {
               logCapture={logCapture}
               setLogCapture={changeLogCapture}
               refresh={() => run("logs", refreshLogs)}
+              reset={resetLogs}
             />
           )}
           {activeTab === "files" && (
@@ -552,7 +580,14 @@ function App() {
           {activeTab === "indexing" && <IndexingTab onSubmit={startIndex} jobs={jobs} refresh={() => run("jobs", refreshJobs)} busy={busy === "index"} />}
           {activeTab === "watchers" && <WatchersTab watchers={watchers} action={watcherAction} />}
           {activeTab === "qdrant" && <QdrantTab qdrant={qdrant} refresh={() => run("qdrant", refreshQdrant)} reset={resetQdrant} />}
-          {activeTab === "settings" && <SettingsTab settings={settings} refresh={() => run("settings", refreshSettings)} />}
+          {activeTab === "settings" && (
+            <SettingsTab
+              settings={settings}
+              refresh={() => run("settings", refreshSettings)}
+              save={saveConfiguration}
+              reset={resetConfiguration}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -624,7 +659,7 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
       ],
     },
     {
-      title: "Engineering Memory",
+      title: "Document Memory",
       ok: status?.memories.engineering.ok,
       rows: [
         ["Files", status?.memories.engineering.file_count ?? "-"],
@@ -650,11 +685,12 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
     },
     {
       title: "Logs",
-      ok: Boolean(status?.logs.memory.ok && status?.logs.code.ok),
+      ok: Boolean(status?.logs.memory.ok && status?.logs.code.ok && status?.logs["agentic-rag"]?.ok),
       warning: true,
       rows: [
-        ["Memory log", status?.logs.memory.exists ? "present" : "missing"],
-        ["Code log", status?.logs.code.exists ? "present" : "missing"],
+        ["Memory log", formatLogState(status?.logs.memory.state)],
+        ["Code log", formatLogState(status?.logs.code.state)],
+        ["Agentic RAG", formatLogState(status?.logs["agentic-rag"]?.state)],
       ],
     },
   ];
@@ -711,7 +747,7 @@ function Overview({ status, history, refresh }: { status: DashboardStatus | null
             <XAxis dataKey="time" hide />
             <YAxis width={42} />
             <Tooltip />
-            <Bar dataKey="engineeringFiles" name="Engineering" fill="#2563eb" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="engineeringFiles" name="Documents" fill="#2563eb" radius={[6, 6, 0, 0]} />
             <Bar dataKey="codeFiles" name="Code" fill="#138a54" radius={[6, 6, 0, 0]} />
           </BarChart>
         </ChartPanel>
@@ -741,6 +777,7 @@ function LogsTab({
   logCapture,
   setLogCapture,
   refresh,
+  reset,
 }: {
   source: LogSource;
   setSource: (source: LogSource) => void;
@@ -749,6 +786,7 @@ function LogsTab({
   logCapture: boolean;
   setLogCapture: (enabled: boolean) => void;
   refresh: () => void;
+  reset: () => void;
 }) {
   return (
     <Panel>
@@ -761,6 +799,7 @@ function LogsTab({
           ))}
         </select>
         <Button onClick={refresh}>Refresh</Button>
+        <Button variant="danger" onClick={reset}>Reset logs</Button>
         <label className="flex items-center gap-2 text-sm font-bold">
           <input type="checkbox" checked={logCapture} onChange={(event) => setLogCapture(event.target.checked)} />
           Temporary log capture
@@ -768,10 +807,26 @@ function LogsTab({
         <span className="text-sm text-muted">Auto-refreshes every 2 seconds.</span>
       </div>
       <pre ref={logRef} className="log-box">
-        {(logs?.lines || []).join("\n") || logs?.error || ""}
+        {(logs?.lines || []).join("\n") || logs?.error || logs?.message || logEmptyMessage(logs)}
       </pre>
     </Panel>
   );
+}
+
+function formatLogState(state?: LogsResponse["state"]): string {
+  if (state === "available") return "available";
+  if (state === "disabled") return "logging disabled";
+  if (state === "empty") return "no events yet";
+  if (state === "unavailable") return "log unavailable";
+  return "unknown";
+}
+
+function logEmptyMessage(logs: LogsResponse | null): string {
+  if (!logs) return "Loading logs…";
+  if (logs.state === "disabled") return "Logging is disabled for this source.";
+  if (logs.state === "empty") return "No events have been logged yet.";
+  if (logs.state === "unavailable") return "The configured log file is unavailable.";
+  return "";
 }
 
 function parentPath(path: string) {
@@ -907,7 +962,7 @@ function FilesTab({
       <div className="mb-4 grid gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <select value={scope} onChange={(event) => setScope(event.target.value as Scope)} className="control max-w-xs">
-            <option value="engineering">Engineering memory</option>
+            <option value="engineering">Document memory</option>
             <option value="code">Code repositories</option>
           </select>
           <input value={filter} onChange={(event) => setFilter(event.target.value)} className="control min-w-[220px] max-w-sm" type="search" placeholder="Filter current directory" />
@@ -921,18 +976,26 @@ function FilesTab({
 }
 
 function UploadTab({ onSubmit, result, busy }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; result: string; busy: boolean }) {
+  const [scope, setScope] = useState<Scope>("engineering");
+  const acceptedTypes = scope === "engineering" ? engineeringUploadTypes : codeUploadTypes;
+
   return (
     <div className="grid gap-5 xl:grid-cols-[460px_1fr]">
       <Panel>
         <form className="grid gap-4" onSubmit={onSubmit}>
           <Field label="Destination">
-            <select name="scope" className="control">
-              <option value="engineering">Engineering memory</option>
+            <select name="scope" value={scope} onChange={(event) => setScope(event.target.value as Scope)} className="control">
+              <option value="engineering">Document memory</option>
               <option value="code">Code memory</option>
             </select>
           </Field>
           <Field label="Files">
-            <input name="files" type="file" multiple className="control" />
+            <input name="files" type="file" multiple accept={acceptedTypes} className="control" />
+            <span className="text-xs font-normal text-muted">
+              {scope === "engineering"
+                ? "Supported: Markdown (.md) files only."
+                : "Supported: ZIP archives and common source, script, markup, configuration, and text files."}
+            </span>
           </Field>
           <Button disabled={busy} type="submit">Upload</Button>
         </form>
@@ -1019,7 +1082,7 @@ function IndexingTab({
         <form className="grid gap-4 md:grid-cols-[220px_1fr_auto]" onSubmit={onSubmit}>
           <Field label="Scope">
             <select name="scope" className="control">
-              <option value="engineering">Engineering memory</option>
+              <option value="engineering">Document memory</option>
               <option value="code">Code memory</option>
             </select>
           </Field>
@@ -1082,14 +1145,14 @@ function WatchersTab({
         return (
           <Panel key={scope}>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-lg font-black capitalize">{scope} watcher</h3>
+              <h3 className="text-lg font-black">{scope === "engineering" ? "Document" : "Code"} watcher</h3>
               <StatusBadge ok={watcher.running} warning={!watcher.running} label={watcher.running ? "RUNNING" : "STOPPED"} />
             </div>
             <div className="mb-4 flex gap-3">
               <Button onClick={() => action(scope, "start")}>Start</Button>
               <Button variant="secondary" onClick={() => action(scope, "stop")}>Stop</Button>
             </div>
-            <pre className="result-box">{JSON.stringify(watcher, null, 2)}</pre>
+            <pre className="result-box watcher-terminal">{JSON.stringify(watcher, null, 2)}</pre>
           </Panel>
         );
       })}
@@ -1149,22 +1212,110 @@ function QdrantTab({
   );
 }
 
-function SettingsTab({ settings, refresh }: { settings: DashboardSettingsResponse | null; refresh: () => void }) {
+function SettingsTab({
+  settings,
+  refresh,
+  save,
+  reset,
+}: {
+  settings: DashboardSettingsResponse | null;
+  refresh: () => void;
+  save: (values: Record<string, string>) => void;
+  reset: () => void;
+}) {
   const rows = Object.entries(settings?.settings || {}).filter(([, value]) => value !== "");
   const paths = Object.entries(settings?.paths || {});
+  const [values, setValues] = useState<Record<string, string>>({});
+  const definitions = settings?.configuration?.definitions || {};
+
+  useEffect(() => {
+    setValues(settings?.configuration?.values || {});
+  }, [settings]);
+
+  const groups = Object.entries(definitions).reduce<Record<string, string[]>>((result, [name, definition]) => {
+    (result[definition.group] ||= []).push(name);
+    return result;
+  }, {});
+
   return (
-    <div className="grid gap-5 xl:grid-cols-2">
+    <div className="grid gap-5">
+      <Panel>
+        <form className="grid gap-5" onSubmit={(event) => { event.preventDefault(); save(values); }}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-black">Editable Configuration</h3>
+              <p className="mt-1 text-sm text-muted">Changes are written to .env and require container recreation.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={!settings?.configuration?.env_file_available}>Save configuration</Button>
+              <Button type="button" variant="danger" onClick={reset} disabled={!settings?.configuration?.env_file_available}>Reset to defaults</Button>
+            </div>
+          </div>
+          {!settings?.configuration?.env_file_available && (
+            <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm font-bold text-bad">The host .env file is not mounted. Recreate the dashboard with the updated Compose configuration.</div>
+          )}
+          {Object.entries(groups).map(([group, names]) => (
+            <fieldset key={group} className="grid gap-4 rounded-xl border border-line bg-slate-50/50 p-4 md:grid-cols-2 xl:grid-cols-3">
+              <legend className="px-2 text-base font-black">{group}</legend>
+              {names.map((name) => {
+                const definition = definitions[name];
+                return (
+                  <Field
+                    key={name}
+                    label={
+                      <span className="flex items-center gap-2">
+                        <span>{definition.label}</span>
+                        <span
+                          className="inline-flex h-5 w-5 cursor-help items-center justify-center rounded-full border border-line bg-white text-xs font-black text-ocean"
+                          title={definition.description}
+                          aria-label={`${definition.label}: ${definition.description}`}
+                          tabIndex={0}
+                        >
+                          ?
+                        </span>
+                      </span>
+                    }
+                  >
+                    {definition.type === "boolean" ? (
+                      <select className="control" value={values[name] || definition.default} onChange={(event) => setValues({ ...values, [name]: event.target.value })}>
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                      </select>
+                    ) : (
+                      <input
+                        className="control"
+                        type="number"
+                        step={definition.type === "integer" ? 1 : "any"}
+                        min={definition.min}
+                        max={definition.max}
+                        value={values[name] || definition.default}
+                        onChange={(event) => setValues({ ...values, [name]: event.target.value })}
+                      />
+                    )}
+                    <span className="text-xs font-normal leading-5 text-muted">
+                      {definition.description} Default: {definition.default}
+                      {definition.min !== undefined && definition.max !== undefined ? ` · Range: ${definition.min}–${definition.max}` : ""}
+                    </span>
+                  </Field>
+                );
+              })}
+            </fieldset>
+          ))}
+        </form>
+      </Panel>
+      <div className="grid gap-5 xl:grid-cols-2">
       <Panel>
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h3 className="text-base font-black">Runtime Settings</h3>
+            <h3 className="text-base font-black">Active runtime values</h3>
           <Button onClick={refresh}>Refresh</Button>
         </div>
         <KeyValueTable rows={rows} />
       </Panel>
       <Panel>
-        <h3 className="mb-4 text-base font-black">Mounted Paths</h3>
+          <h3 className="mb-4 text-base font-black">Storage locations</h3>
         <KeyValueTable rows={paths} />
       </Panel>
+      </div>
     </div>
   );
 }

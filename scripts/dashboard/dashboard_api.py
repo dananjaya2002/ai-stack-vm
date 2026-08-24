@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import zipfile
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,6 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ai_stack_rag.utils.log_status import log_stats as classify_log_stats, read_last_lines as read_log_lines
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
@@ -38,17 +40,91 @@ ENGINEERING_MEMORY_DIR = Path(os.getenv("ENGINEERING_MEMORY_DIR", "/memory/engin
 CODE_MEMORY_DIR = Path(os.getenv("CODE_MEMORY_DIR", "/memory/code-memory"))
 MEMORY_LOG = Path(os.getenv("MEMORY_LOG", "/logs/memory/memory_api.log"))
 CODE_LOG = Path(os.getenv("CODE_LOG", "/logs/code/code_proxy.log"))
+AGENTIC_RAG_LOG = Path(os.getenv("AGENTIC_RAG_LOG", "/logs/agentic-rag/agentic_rag.log"))
+MEMORY_LOG_ENABLED = os.getenv("MEMORY_LOG_ENABLED", "true").lower() == "true"
+CODE_LOG_ENABLED = os.getenv("CODE_LOG_ENABLED", "true").lower() == "true"
+AGENTIC_RAG_LOG_ENABLED = os.getenv("AGENTIC_RAG_LOG_ENABLED", "true").lower() == "true"
 DASHBOARD_LOG_DIR = Path(os.getenv("DASHBOARD_LOG_DIR", "/tmp/ai-stack-dashboard"))
+AI_STACK_ENV_FILE = Path(os.getenv("AI_STACK_ENV_FILE", "/config/ai-stack.env"))
 
-INDEX_MEMORY_SCRIPT = Path(os.getenv("INDEX_MEMORY_SCRIPT", "/app/memory-proxy/index_memory.py"))
-INDEX_CODE_SCRIPT = Path(os.getenv("INDEX_CODE_SCRIPT", "/app/watcher/index_code.py"))
-WATCH_MEMORY_SCRIPT = Path(os.getenv("WATCH_MEMORY_SCRIPT", "/app/memory-proxy/watch_memory.py"))
-WATCH_CODE_SCRIPT = Path(os.getenv("WATCH_CODE_SCRIPT", "/app/watcher/watch_code.py"))
+CONFIG_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    "SKIP_UTILITY_PROMPTS": {"group": "General", "type": "boolean", "default": "true"},
+    "ENABLE_RATE_LIMIT": {"group": "General", "type": "boolean", "default": "true"},
+    "RATE_LIMIT_PER_MINUTE": {"group": "General", "type": "integer", "default": "60", "min": 1, "max": 10000},
+    "LLAMA_CONTEXT": {"group": "Model", "type": "integer", "default": "8192", "min": 512, "max": 131072},
+    "LLAMA_THREADS": {"group": "Model", "type": "integer", "default": "6", "min": 1, "max": 256},
+    "LLAMA_BATCH": {"group": "Model", "type": "integer", "default": "512", "min": 1, "max": 8192},
+    "LLAMA_UBATCH": {"group": "Model", "type": "integer", "default": "256", "min": 1, "max": 8192},
+    "MEMORY_API_LOGS": {"group": "Document Memory", "type": "boolean", "default": "true"},
+    "MEMORY_TOP_K": {"group": "Document Memory", "type": "integer", "default": "5", "min": 1, "max": 50},
+    "MEMORY_SCORE_THRESHOLD": {"group": "Document Memory", "type": "number", "default": "0.25", "min": 0, "max": 1},
+    "CODE_PROXY_LOGS": {"group": "Code Memory", "type": "boolean", "default": "true"},
+    "CODE_TOP_K": {"group": "Code Memory", "type": "integer", "default": "8", "min": 1, "max": 50},
+    "CODE_SCORE_THRESHOLD": {"group": "Code Memory", "type": "number", "default": "0.25", "min": 0, "max": 1},
+    "MAX_CHUNKS_PER_FILE": {"group": "Code Memory", "type": "integer", "default": "2", "min": 1, "max": 20},
+    "SEARCH_LIMIT_MULTIPLIER": {"group": "Code Memory", "type": "integer", "default": "4", "min": 1, "max": 20},
+    "AGENTIC_RAG_LOGS": {"group": "Agentic RAG", "type": "boolean", "default": "true"},
+    "ENABLE_INDEX_V2": {"group": "Agentic RAG", "type": "boolean", "default": "true"},
+    "ENABLE_AGENTIC_RETRIEVAL": {"group": "Agentic RAG", "type": "boolean", "default": "true"},
+    "AGENTIC_MAX_STEPS": {"group": "Agentic RAG", "type": "integer", "default": "4", "min": 1, "max": 12},
+    "AGENTIC_INITIAL_SUBQUERIES": {"group": "Agentic RAG", "type": "integer", "default": "3", "min": 1, "max": 12},
+    "AGENTIC_FOLLOWUP_TOP_K": {"group": "Agentic RAG", "type": "integer", "default": "4", "min": 1, "max": 50},
+    "AGENTIC_MAX_TOTAL_CHUNKS": {"group": "Agentic RAG", "type": "integer", "default": "16", "min": 1, "max": 100},
+    "AGENTIC_MIN_CONFIDENCE": {"group": "Agentic RAG", "type": "number", "default": "0.70", "min": 0, "max": 1},
+    "AGENTIC_TOP_K_PER_QUERY": {"group": "Agentic RAG", "type": "integer", "default": "3", "min": 1, "max": 50},
+    "SIMPLE_TOP_K": {"group": "Agentic RAG", "type": "integer", "default": "6", "min": 1, "max": 50},
+    "AGENTIC_SCORE_THRESHOLD": {"group": "Agentic RAG", "type": "number", "default": "0.20", "min": 0, "max": 1},
+    "MAX_CHUNK_CHARS": {"group": "Agentic RAG", "type": "integer", "default": "4000", "min": 100, "max": 50000},
+    "MAX_CONTEXT_CHARS": {"group": "Agentic RAG", "type": "integer", "default": "50000", "min": 1000, "max": 500000},
+}
+
+CONFIG_PRESENTATION: Dict[str, Dict[str, str]] = {
+    "SKIP_UTILITY_PROMPTS": {"label": "Skip retrieval for utility prompts", "description": "Send Open WebUI title, tag, and follow-up requests directly to the model without RAG retrieval."},
+    "ENABLE_RATE_LIMIT": {"label": "Enable rate limiting", "description": "Limit how frequently clients can call the proxy APIs."},
+    "RATE_LIMIT_PER_MINUTE": {"label": "Requests per minute", "description": "Maximum requests accepted from a client during one minute."},
+    "LLAMA_CONTEXT": {"label": "Model context window", "description": "Maximum tokens the model can consider in one request. Larger values use more memory."},
+    "LLAMA_THREADS": {"label": "Model CPU threads", "description": "CPU threads used by llama.cpp for inference."},
+    "LLAMA_BATCH": {"label": "Prompt batch size", "description": "Number of prompt tokens processed together. Larger batches can improve speed but use more memory."},
+    "LLAMA_UBATCH": {"label": "Physical batch size", "description": "Maximum tokens processed in one physical llama.cpp batch."},
+    "MEMORY_API_LOGS": {"label": "Document logging", "description": "Write document-memory retrieval events to the persistent log file."},
+    "MEMORY_TOP_K": {"label": "Document results", "description": "Maximum document chunks supplied to the model for an answer."},
+    "MEMORY_SCORE_THRESHOLD": {"label": "Document relevance threshold", "description": "Minimum similarity score for accepting a document chunk. Lower values return more results."},
+    "CODE_PROXY_LOGS": {"label": "Code logging", "description": "Write code retrieval events to the persistent log file."},
+    "CODE_TOP_K": {"label": "Code results", "description": "Maximum code chunks supplied to the model for an answer."},
+    "CODE_SCORE_THRESHOLD": {"label": "Code relevance threshold", "description": "Minimum similarity score for accepting a code chunk."},
+    "MAX_CHUNKS_PER_FILE": {"label": "Chunks per file", "description": "Maximum chunks selected from one code file to keep results diverse."},
+    "SEARCH_LIMIT_MULTIPLIER": {"label": "Search candidate multiplier", "description": "Extra Qdrant candidates fetched before local filtering and ranking."},
+    "AGENTIC_RAG_LOGS": {"label": "Agentic RAG logging", "description": "Write retrieval steps, confidence, timing, and stop reasons to the Agentic RAG log."},
+    "ENABLE_INDEX_V2": {"label": "Use enhanced index", "description": "Enable metadata-aware chunks and retrieval behavior from the enhanced index."},
+    "ENABLE_AGENTIC_RETRIEVAL": {"label": "Enable agentic retrieval", "description": "Allow multi-step planning, evidence evaluation, and follow-up searches."},
+    "AGENTIC_MAX_STEPS": {"label": "Maximum retrieval steps", "description": "Safety limit for iterative Agentic RAG searches."},
+    "AGENTIC_INITIAL_SUBQUERIES": {"label": "Initial subqueries", "description": "Maximum focused searches created during the first retrieval step."},
+    "AGENTIC_FOLLOWUP_TOP_K": {"label": "Follow-up results", "description": "Maximum results fetched for each follow-up evidence query."},
+    "AGENTIC_MAX_TOTAL_CHUNKS": {"label": "Total evidence limit", "description": "Maximum unique chunks retained across every retrieval step."},
+    "AGENTIC_MIN_CONFIDENCE": {"label": "Required confidence", "description": "Confidence needed before Agentic RAG considers the evidence sufficient."},
+    "AGENTIC_TOP_K_PER_QUERY": {"label": "Initial results per query", "description": "Maximum chunks fetched for each initial retrieval query."},
+    "SIMPLE_TOP_K": {"label": "Simple retrieval results", "description": "Maximum chunks used when multi-step agentic retrieval is disabled."},
+    "AGENTIC_SCORE_THRESHOLD": {"label": "Agentic relevance threshold", "description": "Minimum Qdrant similarity score accepted by Agentic RAG."},
+    "MAX_CHUNK_CHARS": {"label": "Maximum chunk length", "description": "Maximum characters retained from an individual evidence chunk."},
+    "MAX_CONTEXT_CHARS": {"label": "Maximum evidence context", "description": "Maximum combined evidence characters passed to the answer model."},
+}
+
+INDEX_MEMORY_MODULE = os.getenv("INDEX_MEMORY_MODULE", "ai_stack_rag.ingestion.memory")
+INDEX_CODE_MODULE = os.getenv("INDEX_CODE_MODULE", "ai_stack_rag.ingestion.code")
+WATCH_MEMORY_MODULE = os.getenv("WATCH_MEMORY_MODULE", "ai_stack_rag.ingestion.watch_memory")
+WATCH_CODE_MODULE = os.getenv("WATCH_CODE_MODULE", "ai_stack_rag.ingestion.watch_code")
 PYTHON_BIN = os.getenv("PYTHON_BIN", "python")
 
 HTTP_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_HTTP_TIMEOUT_SECONDS", "3"))
 MAX_LOG_LINES = int(os.getenv("DASHBOARD_MAX_LOG_LINES", "400"))
 MAX_UPLOAD_BYTES = int(os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+ENGINEERING_UPLOAD_SUFFIXES = frozenset({".md"})
+CODE_UPLOAD_SUFFIXES = frozenset({
+    ".zip", ".txt", ".py", ".js", ".jsx", ".ts", ".tsx", ".dart", ".java",
+    ".go", ".rs", ".c", ".h", ".cpp", ".hpp", ".cs", ".php", ".rb", ".sh",
+    ".bash", ".zsh", ".yaml", ".yml", ".json", ".md", ".html", ".css", ".scss",
+    ".sql", ".xml", ".toml", ".ini",
+})
 SECURITY_MODE = os.getenv("SECURITY_MODE", "development").strip().lower()
 DASHBOARD_AUTH_MODE = os.getenv("DASHBOARD_AUTH_MODE", "auto").strip().lower()
 DASHBOARD_ADMIN_USERNAME = os.getenv("DASHBOARD_ADMIN_USERNAME", "admin")
@@ -84,6 +160,14 @@ class IndexRequest(BaseModel):
 
 class LogCaptureRequest(BaseModel):
     enabled: bool
+
+
+class LogResetRequest(BaseModel):
+    source: str
+
+
+class ConfigUpdateRequest(BaseModel):
+    values: Dict[str, str]
 
 
 class DeleteFileRequest(BaseModel):
@@ -362,6 +446,80 @@ def non_secret_settings() -> Dict[str, Any]:
     return {name: os.getenv(name, "") for name in names}
 
 
+def read_env_values() -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if not AI_STACK_ENV_FILE.exists():
+        return values
+    for raw_line in AI_STACK_ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        values[name.strip()] = value.strip()
+    return values
+
+
+def validate_config_value(name: str, raw_value: str) -> str:
+    definition = CONFIG_DEFINITIONS.get(name)
+    if not definition:
+        raise HTTPException(status_code=400, detail=f"Unsupported configuration variable: {name}")
+    value = str(raw_value).strip()
+    value_type = definition["type"]
+    if value_type == "boolean":
+        normalized = value.lower()
+        if normalized not in {"true", "false"}:
+            raise HTTPException(status_code=400, detail=f"{name} must be true or false.")
+        return normalized
+    try:
+        parsed = int(value) if value_type == "integer" else float(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{name} must be a valid {value_type}.") from exc
+    if parsed < definition["min"] or parsed > definition["max"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} must be between {definition['min']} and {definition['max']}.",
+        )
+    return str(parsed)
+
+
+def write_env_values(updates: Dict[str, str]) -> None:
+    if not AI_STACK_ENV_FILE.exists() or not AI_STACK_ENV_FILE.is_file():
+        raise HTTPException(status_code=503, detail="The host .env file is not mounted into the dashboard.")
+    normalized = {name: validate_config_value(name, value) for name, value in updates.items()}
+    lines = AI_STACK_ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    found = set()
+    output = []
+    for line in lines:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=", line)
+        name = match.group(1) if match else None
+        if name in normalized:
+            output.append(f"{name}={normalized[name]}")
+            found.add(name)
+        else:
+            output.append(line)
+    if normalized.keys() - found:
+        output.extend(["", "# Dashboard-managed configuration"])
+        output.extend(f"{name}={normalized[name]}" for name in normalized if name not in found)
+    AI_STACK_ENV_FILE.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+
+def editable_config_payload() -> Dict[str, Any]:
+    env_values = read_env_values()
+    values = {
+        name: env_values.get(name, os.getenv(name, definition["default"]))
+        for name, definition in CONFIG_DEFINITIONS.items()
+    }
+    return {
+        "values": values,
+        "definitions": {
+            name: {**definition, **CONFIG_PRESENTATION[name]}
+            for name, definition in CONFIG_DEFINITIONS.items()
+        },
+        "env_file_available": AI_STACK_ENV_FILE.is_file(),
+        "restart_required": True,
+    }
+
+
 def qdrant_request(method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     response = requests.request(method, f"{QDRANT_URL}{path}", json=body, timeout=max(HTTP_TIMEOUT_SECONDS, 10))
     response.raise_for_status()
@@ -454,30 +612,8 @@ def memory_stats(path: Path) -> Dict[str, Any]:
     }
 
 
-def log_stats(path: Path) -> Dict[str, Any]:
-    if not path.exists():
-        return {
-            "ok": False,
-            "warning": True,
-            "error": "Log file does not exist.",
-            "path": str(path),
-            "exists": False,
-            "size_bytes": 0,
-            "latest_modified_time": None,
-        }
-    try:
-        stat = path.stat()
-        return {
-            "ok": True,
-            "warning": False,
-            "error": None,
-            "path": str(path),
-            "exists": True,
-            "size_bytes": stat.st_size,
-            "latest_modified_time": iso_time(stat.st_mtime),
-        }
-    except Exception as exc:
-        return error_payload(str(exc), path=str(path), exists=True, size_bytes=None, latest_modified_time=None)
+def log_stats(path: Path, enabled: bool = True) -> Dict[str, Any]:
+    return classify_log_stats(path, enabled)
 
 
 def system_stats() -> Dict[str, Any]:
@@ -621,14 +757,10 @@ def list_directory(scope: str, raw_path: Optional[str]) -> Dict[str, Any]:
     }
 
 
-def read_last_lines(path: Path, max_lines: int = MAX_LOG_LINES) -> Dict[str, Any]:
-    if not path.exists():
-        return {"ok": False, "error": "Log file does not exist.", "path": str(path), "lines": []}
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return {"ok": True, "error": None, "path": str(path), "lines": lines[-max_lines:]}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc), "path": str(path), "lines": []}
+def read_last_lines(
+    path: Path, source: str, enabled: bool = True, max_lines: int = MAX_LOG_LINES
+) -> Dict[str, Any]:
+    return read_log_lines(path, source, enabled, max_lines)
 
 
 def redact(text: str, secrets: Optional[List[str]] = None) -> str:
@@ -786,6 +918,17 @@ def save_upload(upload: UploadFile, destination_root: Path) -> Dict[str, Any]:
     return {"filename": upload.filename, "path": str(destination.relative_to(destination_root)), "size_bytes": total}
 
 
+def validate_upload_extension(scope: str, filename: str) -> None:
+    allowed = ENGINEERING_UPLOAD_SUFFIXES if scope == "engineering" else CODE_UPLOAD_SUFFIXES
+    suffix = Path(filename).suffix.lower()
+    if suffix not in allowed:
+        supported = ", ".join(sorted(allowed))
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported {scope} upload type '{suffix or '[no extension]'}'. Supported: {supported}",
+        )
+
+
 def extract_zip_safe(zip_path: Path, destination_root: Path) -> List[str]:
     extracted = []
     with zipfile.ZipFile(zip_path) as archive:
@@ -895,7 +1038,11 @@ def dashboard_status() -> Dict[str, Any]:
     llama = check_llama()
     qdrant = check_qdrant()
     memories = {"engineering": memory_stats(ENGINEERING_MEMORY_DIR), "code": memory_stats(CODE_MEMORY_DIR)}
-    logs = {"memory": log_stats(MEMORY_LOG), "code": log_stats(CODE_LOG)}
+    logs = {
+        "memory": log_stats(MEMORY_LOG, MEMORY_LOG_ENABLED),
+        "code": log_stats(CODE_LOG, CODE_LOG_ENABLED),
+        "agentic-rag": log_stats(AGENTIC_RAG_LOG, AGENTIC_RAG_LOG_ENABLED),
+    }
     system = system_stats()
     strict_checks = [llama, qdrant, memories["engineering"], memories["code"], system]
 
@@ -917,14 +1064,28 @@ def dashboard_settings() -> Dict[str, Any]:
     return {
         "ok": True,
         "settings": non_secret_settings(),
+        "configuration": editable_config_payload(),
         "paths": {
-            "engineering_memory": str(ENGINEERING_MEMORY_DIR),
+            "document_memory": str(ENGINEERING_MEMORY_DIR),
             "code_memory": str(CODE_MEMORY_DIR),
             "memory_log": str(MEMORY_LOG),
             "code_log": str(CODE_LOG),
+            "agentic_rag_log": str(AGENTIC_RAG_LOG),
             "dashboard_log_dir": str(DASHBOARD_LOG_DIR),
         },
     }
+
+
+@app.put("/api/dashboard/config")
+def update_dashboard_config(req: ConfigUpdateRequest) -> Dict[str, Any]:
+    write_env_values(req.values)
+    return {"ok": True, "configuration": editable_config_payload(), "restart_required": True}
+
+
+@app.post("/api/dashboard/config/reset")
+def reset_dashboard_config() -> Dict[str, Any]:
+    write_env_values({name: definition["default"] for name, definition in CONFIG_DEFINITIONS.items()})
+    return {"ok": True, "configuration": editable_config_payload(), "restart_required": True}
 
 
 @app.get("/api/dashboard/qdrant/collections")
@@ -971,24 +1132,75 @@ def dashboard_delete_file(req: DeleteFileRequest) -> Dict[str, Any]:
 @app.get("/api/dashboard/logs")
 def dashboard_logs(source: str = "dashboard") -> Dict[str, Any]:
     if source == "memory":
-        return read_last_lines(MEMORY_LOG)
+        return read_last_lines(MEMORY_LOG, source, MEMORY_LOG_ENABLED)
     if source == "code":
-        return read_last_lines(CODE_LOG)
+        return read_last_lines(CODE_LOG, source, CODE_LOG_ENABLED)
+    if source == "agentic-rag":
+        return read_last_lines(AGENTIC_RAG_LOG, source, AGENTIC_RAG_LOG_ENABLED)
     if source == "dashboard":
         with JOBS_LOCK:
             lines = []
             for job in JOBS.values():
                 lines.append(f"[{job['status']}] {job['name']} {job['id']}")
                 lines.extend(job.get("output", [])[-80:])
-            return {"ok": True, "error": None, "source": source, "lines": lines[-MAX_LOG_LINES:]}
+            return {
+                "ok": True, "error": None, "source": source,
+                "state": "available" if lines else "empty", "enabled": LOG_CAPTURE["enabled"],
+                "message": None if lines else (
+                    "No dashboard activity has been captured yet."
+                    if LOG_CAPTURE["enabled"] else "Temporary log capture is disabled."
+                ),
+                "lines": lines[-MAX_LOG_LINES:],
+            }
     if source == "watchers":
         lines = []
         with WATCHERS_LOCK:
             for scope, watcher in WATCHERS.items():
                 lines.append(f"[{scope}] watcher")
                 lines.extend(watcher.get("output", [])[-160:])
-        return {"ok": True, "error": None, "source": source, "lines": lines[-MAX_LOG_LINES:]}
-    raise HTTPException(status_code=400, detail="source must be memory, code, dashboard, or watchers")
+        return {
+            "ok": True, "error": None, "source": source,
+            "state": "available" if lines else "empty", "enabled": LOG_CAPTURE["enabled"],
+            "message": None if lines else (
+                "No watcher has produced output yet. Watcher logs are temporary and are cleared when the dashboard restarts."
+                if LOG_CAPTURE["enabled"] else "Temporary log capture is disabled."
+            ),
+            "lines": lines[-MAX_LOG_LINES:],
+        }
+    raise HTTPException(
+        status_code=400,
+        detail="source must be memory, code, agentic-rag, dashboard, or watchers",
+    )
+
+
+@app.post("/api/dashboard/logs/reset")
+def reset_dashboard_logs(req: LogResetRequest) -> Dict[str, Any]:
+    file_sources = {
+        "memory": MEMORY_LOG,
+        "code": CODE_LOG,
+        "agentic-rag": AGENTIC_RAG_LOG,
+    }
+    if req.source in file_sources:
+        path = file_sources[req.source]
+        if not path.exists():
+            raise HTTPException(status_code=409, detail=f"The {req.source} log file does not exist.")
+        try:
+            path.write_text("", encoding="utf-8")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not reset {req.source} log: {exc}") from exc
+    elif req.source == "dashboard":
+        with JOBS_LOCK:
+            JOBS.clear()
+    elif req.source == "watchers":
+        with WATCHERS_LOCK:
+            for watcher in WATCHERS.values():
+                watcher["output"] = []
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="source must be memory, code, agentic-rag, dashboard, or watchers",
+        )
+    return {"ok": True, "source": req.source}
 
 
 @app.post("/api/dashboard/log-capture")
@@ -1000,6 +1212,8 @@ def set_log_capture(req: LogCaptureRequest) -> Dict[str, Any]:
 @app.post("/api/dashboard/upload")
 def upload_files(scope: str = Form(...), files: List[UploadFile] = File(...)) -> Dict[str, Any]:
     root = scope_root(scope)
+    for upload in files:
+        validate_upload_extension(scope, upload.filename or "")
     root.mkdir(parents=True, exist_ok=True)
     saved = []
     extracted = []
@@ -1050,12 +1264,12 @@ def clone_repo(req: CloneRequest) -> Dict[str, Any]:
 def start_index(req: IndexRequest) -> Dict[str, Any]:
     if req.scope == "engineering":
         target = safe_join(ENGINEERING_MEMORY_DIR, req.target)
-        command = [PYTHON_BIN, str(INDEX_MEMORY_SCRIPT)] + ([] if target == ENGINEERING_MEMORY_DIR else [str(target)])
+        command = [PYTHON_BIN, "-m", INDEX_MEMORY_MODULE] + ([] if target == ENGINEERING_MEMORY_DIR else [str(target)])
         env = index_env("engineering-memory", ENGINEERING_MEMORY_DIR)
         name = f"index engineering {req.target or 'all'}"
     elif req.scope == "code":
         target = safe_join(CODE_MEMORY_DIR, req.target)
-        command = [PYTHON_BIN, str(INDEX_CODE_SCRIPT), str(target)]
+        command = [PYTHON_BIN, "-m", INDEX_CODE_MODULE, str(target)]
         env = index_env("code-memory", CODE_MEMORY_DIR)
         name = f"index code {req.target or 'all'}"
     else:
@@ -1087,17 +1301,17 @@ def get_job(job_id: str) -> Dict[str, Any]:
 @app.post("/api/dashboard/watchers/{scope}/start")
 def start_watcher(scope: str) -> Dict[str, Any]:
     if scope == "engineering":
-        script = WATCH_MEMORY_SCRIPT
+        module = WATCH_MEMORY_MODULE
         watched_path = ENGINEERING_MEMORY_DIR
         env = index_env("engineering-memory", ENGINEERING_MEMORY_DIR)
         env["MEMORY_DIR"] = str(ENGINEERING_MEMORY_DIR)
-        env["INDEX_MEMORY_SCRIPT"] = str(INDEX_MEMORY_SCRIPT)
+        env["INDEX_MEMORY_MODULE"] = INDEX_MEMORY_MODULE
     elif scope == "code":
-        script = WATCH_CODE_SCRIPT
+        module = WATCH_CODE_MODULE
         watched_path = CODE_MEMORY_DIR
         env = index_env("code-memory", CODE_MEMORY_DIR)
         env["REPOS_ROOT"] = str(CODE_MEMORY_DIR)
-        env["INDEX_CODE_SCRIPT"] = str(INDEX_CODE_SCRIPT)
+        env["INDEX_CODE_MODULE"] = INDEX_CODE_MODULE
     else:
         raise HTTPException(status_code=400, detail="scope must be engineering or code")
 
@@ -1110,7 +1324,7 @@ def start_watcher(scope: str) -> Dict[str, Any]:
             raise HTTPException(status_code=409, detail=f"{scope} watcher is already running.")
 
         process = subprocess.Popen(
-            [PYTHON_BIN, str(script)],
+            [PYTHON_BIN, "-m", module],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

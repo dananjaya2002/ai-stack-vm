@@ -4,6 +4,11 @@ Indexing turns local files into vector-searchable chunks in Qdrant.
 
 ## Engineering Memory
 
+Document memory discovers Markdown (`.md`) files only. Markdown text is split
+into consecutive non-overlapping chunks using the configured document chunk
+size (500 characters by default), embedded, and stored in Qdrant with the
+original path and filename as metadata.
+
 Put markdown notes under:
 
 ```text
@@ -35,6 +40,12 @@ Index a repo:
 ```bash
 ./ai-stack index code "$AI_STACK_HOME/memory/code-memory/<repo-name>"
 ```
+
+The code watcher debounces repository events and sends every file that becomes
+ready in the same window to one incremental indexing process. The embedding
+model and Qdrant client are initialized once for that batch, and each file's
+chunks are embedded together. Changes detected while a batch is running stay
+queued for the next batch.
 
 ## Dashboard Indexing
 

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-stack-rag"
+version = "0.1.0"
+description = "Modular RAG backend for AI Stack VM"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.scripts]
+rag-index-memory = "ai_stack_rag.ingestion.memory:main"
+rag-index-code = "ai_stack_rag.ingestion.code:main"
+rag-search-memory = "ai_stack_rag.retrieval.memory_cli:main"
+rag-search-code = "ai_stack_rag.retrieval.code_cli:main"
+rag-watch-memory = "ai_stack_rag.ingestion.watch_memory:main"
+rag-watch-code = "ai_stack_rag.ingestion.watch_code:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements/base.txt"]}
