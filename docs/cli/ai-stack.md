@@ -38,6 +38,9 @@
 - `hardware` prints a read-only host, storage, engine, port, and GPU report.
 - `compute` reports or persists CPU/GPU intent; changes require an image rebuild.
 - `install --compute` has precedence over existing `COMPUTE_MODE`.
+- The installer's model menu includes a custom GGUF option. The high-resource
+  preset requests its missing download URL instead of relying on the previous
+  `.env`, and every selection updates all model-related `.env` values.
 - `dashboard` builds/runs the dashboard service.
 - `agentic-rag` is optional and should be started after the main stack.
 - `status` uses `AI_STACK_API_KEY` automatically when it is set in `.env`.

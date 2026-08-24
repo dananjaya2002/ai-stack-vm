@@ -743,6 +743,9 @@ Choose model to install:
 [3] ${VM60_MODEL_NAME}
     $(model_description_for_choice 3)
 
+[4] Add your own GGUF model
+    $(model_description_for_choice 4)
+
 EOF
     read -r -p "Enter choice [recommended: ${RECOMMENDED_MODEL_CHOICE}]: " choice || {
       info "install cancelled"
@@ -750,12 +753,17 @@ EOF
     }
     choice="${choice:-${RECOMMENDED_MODEL_CHOICE}}"
     case "${choice}" in
-      1|2|3)
+      1|2|3|4)
         if [[ "${choice}" == "3" && "${DETECTED_RAM_GB}" -lt 32 ]]; then
           warn "Qwen3.6-35B may exceed your available resources and may be slow or unstable."
           if ! prompt_yes_no "Continue anyway? [y/N]: "; then
             continue
           fi
+        fi
+        if [[ "${choice}" == "3" ]]; then
+          prompt_install_model_details preset-vm60
+        elif [[ "${choice}" == "4" ]]; then
+          prompt_install_model_details custom
         fi
         SELECTED_MODEL_CHOICE="${choice}"
         selected_name="$(model_name_for_choice "${choice}")"
@@ -767,6 +775,44 @@ EOF
         ;;
     esac
   done
+}
+
+prompt_install_model_details() {
+  local mode="$1"
+  local answer derived_file
+
+  SELECTED_MODEL_SHA256=""
+  SELECTED_MODEL_EXPECTED_SIZE_GB=""
+
+  if [[ "${mode}" == "preset-vm60" ]]; then
+    SELECTED_MODEL_NAME="${VM60_MODEL_NAME}"
+    SELECTED_MODEL_FILE="${VM60_MODEL_FILE}"
+    SELECTED_MODEL_PROFILE="vm60"
+    printf '\n%s requires a direct GGUF download URL.\n' "${VM60_MODEL_NAME}"
+  else
+    read -r -p "Model name (for example, Qwen3-8B-Q4_K_M): " SELECTED_MODEL_NAME || fail "install cancelled"
+  fi
+
+  read -r -p "Direct GGUF download URL: " SELECTED_MODEL_URL || fail "install cancelled"
+
+  if [[ "${mode}" == "custom" ]]; then
+    derived_file="$(model_file_from_url "${SELECTED_MODEL_URL}")"
+    read -r -p "Local filename [${derived_file}]: " answer || fail "install cancelled"
+    SELECTED_MODEL_FILE="${answer:-${derived_file}}"
+    read -r -p "Runtime profile: laptop, vm16, or vm60 [vm16]: " answer || fail "install cancelled"
+    SELECTED_MODEL_PROFILE="${answer:-vm16}"
+  fi
+
+  read -r -p "Expected size in GiB (optional if URL size can be detected): " SELECTED_MODEL_EXPECTED_SIZE_GB || fail "install cancelled"
+  read -r -p "SHA-256 checksum (optional): " SELECTED_MODEL_SHA256 || fail "install cancelled"
+
+  validate_model_add_values \
+    "${SELECTED_MODEL_NAME}" \
+    "${SELECTED_MODEL_URL}" \
+    "${SELECTED_MODEL_FILE}" \
+    "${SELECTED_MODEL_PROFILE}" \
+    "${SELECTED_MODEL_EXPECTED_SIZE_GB}" \
+    "${SELECTED_MODEL_SHA256}"
 }
 
 backup_env() {
@@ -782,17 +828,20 @@ backup_env() {
 
 write_model_env() {
   local choice="$1"
-  local model_name model_file model_url model_profile
+  local model_name model_file model_url model_profile model_sha256 model_expected_size_gb
   model_name="$(model_name_for_choice "${choice}")"
   model_file="$(model_file_for_choice "${choice}")"
   model_url="$(model_url_for_choice "${choice}")"
   model_profile="$(model_profile_for_choice "${choice}")"
+  model_sha256="$(model_sha256_for_choice "${choice}")"
+  model_expected_size_gb="$(model_expected_size_for_choice "${choice}")"
 
   set_env_var MODEL_NAME "${model_name}"
   set_env_var MODEL_FILE "${model_file}"
   set_env_var MODEL_PROFILE "${model_profile}"
   set_env_var MODEL_URL "${model_url}"
-  set_env_var MODEL_SHA256 ""
+  set_env_var MODEL_SHA256 "${model_sha256}"
+  set_env_var MODEL_EXPECTED_SIZE_GB "${model_expected_size_gb}"
 
   apply_model_profile_settings "${model_profile}"
 
@@ -963,13 +1012,8 @@ model_name_for_choice() {
   case "$1" in
     1) printf '%s' "${DEFAULT_MODEL_NAME}" ;;
     2) printf '%s' "${MODEL_7B_NAME}" ;;
-    3)
-      if [[ "${MODEL_PROFILE:-}" == "vm60" && -n "${MODEL_NAME:-}" ]]; then
-        printf '%s' "${MODEL_NAME}"
-      else
-        printf '%s' "${VM60_MODEL_NAME}"
-      fi
-      ;;
+    3) printf '%s' "${SELECTED_MODEL_NAME:-${VM60_MODEL_NAME}}" ;;
+    4) printf '%s' "${SELECTED_MODEL_NAME}" ;;
     *) return 1 ;;
   esac
 }
@@ -978,13 +1022,8 @@ model_file_for_choice() {
   case "$1" in
     1) printf '%s' "${DEFAULT_MODEL_FILE}" ;;
     2) printf '%s' "${MODEL_7B_FILE}" ;;
-    3)
-      if [[ "${MODEL_PROFILE:-}" == "vm60" && -n "${MODEL_FILE:-}" ]]; then
-        printf '%s' "${MODEL_FILE}"
-      else
-        printf '%s' "${VM60_MODEL_FILE}"
-      fi
-      ;;
+    3) printf '%s' "${SELECTED_MODEL_FILE:-${VM60_MODEL_FILE}}" ;;
+    4) printf '%s' "${SELECTED_MODEL_FILE}" ;;
     *) return 1 ;;
   esac
 }
@@ -993,13 +1032,8 @@ model_url_for_choice() {
   case "$1" in
     1) printf '%s' "${DEFAULT_MODEL_URL}" ;;
     2) printf '%s' "${MODEL_7B_URL}" ;;
-    3)
-      if [[ "${MODEL_PROFILE:-}" == "vm60" && -n "${MODEL_URL:-}" ]]; then
-        printf '%s' "${MODEL_URL}"
-      else
-        printf '%s' "${VM60_MODEL_URL}"
-      fi
-      ;;
+    3) printf '%s' "${SELECTED_MODEL_URL:-${VM60_MODEL_URL}}" ;;
+    4) printf '%s' "${SELECTED_MODEL_URL}" ;;
     *) return 1 ;;
   esac
 }
@@ -1008,7 +1042,24 @@ model_profile_for_choice() {
   case "$1" in
     1) printf 'laptop' ;;
     2) printf 'vm16' ;;
-    3) printf 'vm60' ;;
+    3) printf '%s' "${SELECTED_MODEL_PROFILE:-vm60}" ;;
+    4) printf '%s' "${SELECTED_MODEL_PROFILE}" ;;
+    *) return 1 ;;
+  esac
+}
+
+model_sha256_for_choice() {
+  case "$1" in
+    1|2) printf '' ;;
+    3|4) printf '%s' "${SELECTED_MODEL_SHA256:-}" ;;
+    *) return 1 ;;
+  esac
+}
+
+model_expected_size_for_choice() {
+  case "$1" in
+    1|2) printf '' ;;
+    3|4) printf '%s' "${SELECTED_MODEL_EXPECTED_SIZE_GB:-}" ;;
     *) return 1 ;;
   esac
 }
@@ -1017,7 +1068,8 @@ model_description_for_choice() {
   case "$1" in
     1) printf 'Best for laptops and low-resource systems. Suggested minimum: 4-6 GB RAM, optional GPU.' ;;
     2) printf 'Best balance for coding and RAG on stronger VMs or workstations. Suggested minimum: 12-16 GB RAM.' ;;
-    3) printf 'High-resource/custom profile. Requires an existing local file or MODEL_URL plus MODEL_EXPECTED_SIZE_GB when size probing is unavailable.' ;;
+    3) printf 'High-resource preset. The installer asks for its direct GGUF URL and optional size/checksum.' ;;
+    4) printf 'Enter any single-file GGUF model compatible with llama.cpp.' ;;
     *) return 1 ;;
   esac
 }
@@ -1064,7 +1116,7 @@ model_remaining_size_gb() {
     fail "${file} is not present and its MODEL_URL is empty; configure a valid model URL or choose another model"
   fi
 
-  expected="${MODEL_EXPECTED_SIZE_GB:-}"
+  expected="$(model_expected_size_for_choice "${choice}")"
   if [[ -z "${expected}" ]]; then
     expected="$(remote_file_size_gb "${url}" || true)"
   fi

@@ -19,7 +19,8 @@ Before backfilling or changing an existing `.env`, the CLI creates a timestamped
 1. Check `git`, `curl`, `awk`, container engine, and Compose.
 2. Detect hardware and filesystems.
 3. Resolve CPU or NVIDIA backend.
-4. Recommend and select a GGUF model.
+4. Recommend and select a bundled GGUF model, configure the high-resource
+   preset, or add a custom GGUF model.
 5. Enforce storage minimums.
 6. Create/backfill `.env` and runtime directories.
 7. Resume or download the model.
@@ -44,8 +45,11 @@ size, also set a whole-number estimate:
 MODEL_EXPECTED_SIZE_GB=20
 ```
 
-The VM60 profile cannot install without either its selected local GGUF file or
-a URL. This is checked before build.
+The high-resource preset asks for its direct GGUF URL because the project does
+not bundle a stable download location for it. The custom option also collects
+the model name, filename, runtime profile, optional size estimate, and optional
+SHA-256 checksum. The selection is used for storage validation and then written
+to `.env` before download.
 
 ## Add a custom model
 
