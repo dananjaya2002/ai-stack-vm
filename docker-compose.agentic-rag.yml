@@ -3,7 +3,8 @@ services:
     image: ai-stack/agentic-rag
     build:
       context: .
-      dockerfile: docker/Dockerfile.agentic-rag
+      dockerfile: docker/Dockerfile.rag-services
+      target: agentic-rag
     container_name: agentic-rag
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}

@@ -21,7 +21,8 @@ services:
     image: ai-stack/memory-proxy
     build:
       context: .
-      dockerfile: docker/Dockerfile.memory-proxy
+      dockerfile: docker/Dockerfile.rag-services
+      target: memory-proxy
     container_name: memory-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}
@@ -61,7 +62,8 @@ services:
     image: ai-stack/code-proxy
     build:
       context: .
-      dockerfile: docker/Dockerfile.code-proxy
+      dockerfile: docker/Dockerfile.rag-services
+      target: code-proxy
     container_name: code-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}

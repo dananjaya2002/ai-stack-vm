@@ -19,7 +19,8 @@ services:
     image: ai-stack/memory-proxy
     build:
       context: .
-      dockerfile: docker/Dockerfile.memory-proxy
+      dockerfile: docker/Dockerfile.rag-services
+      target: memory-proxy
     container_name: memory-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}

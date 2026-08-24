@@ -19,7 +19,8 @@ services:
     image: ai-stack/code-proxy
     build:
       context: .
-      dockerfile: docker/Dockerfile.code-proxy
+      dockerfile: docker/Dockerfile.rag-services
+      target: code-proxy
     container_name: code-proxy
     environment:
       SECURITY_MODE: ${SECURITY_MODE:-development}

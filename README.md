@@ -422,6 +422,18 @@ The recommended path is the helper:
 ./ai-stack status
 ```
 
+The RAG services use named targets from one shared multi-stage Dockerfile. A
+fresh host does not need to build or pull a private `ai-stack/base-deps` image
+before running these commands.
+
+To build one image manually, select its target explicitly:
+
+```bash
+docker build -f docker/Dockerfile.rag-services --target memory-proxy -t ai-stack/memory-proxy .
+docker build -f docker/Dockerfile.rag-services --target code-proxy -t ai-stack/code-proxy .
+docker build -f docker/Dockerfile.rag-services --target agentic-rag -t ai-stack/agentic-rag .
+```
+
 You can also use Compose directly:
 
 ```bash
@@ -991,13 +1003,8 @@ ai-stack-vm/
 |-- config.yaml                      versioned non-secret RAG defaults
 |-- config/                          structured indexing and watcher rules
 |-- docker/
-|   |-- Dockerfile.base
-|   |-- Dockerfile.memory-proxy
-|   |-- Dockerfile.code-proxy
-|   |-- Dockerfile.agentic-rag
-|   |-- Dockerfile.dashboard
-|   |-- Dockerfile.watcher-base
-|   `-- Dockerfile.watcher
+|   |-- Dockerfile.rag-services      shared memory/code/agentic build targets
+|   `-- Dockerfile.dashboard
 |-- scripts/
 |   |-- dashboard/                  FastAPI dashboard + React/Vite frontend
 |   `-- check_markdown_refs.py
