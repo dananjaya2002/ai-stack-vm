@@ -9,6 +9,7 @@
 ./ai-stack profile laptop|vm16|vm60
 ./ai-stack model list
 ./ai-stack model path
+./ai-stack model add [options]
 ./ai-stack model use <file.gguf>
 ./ai-stack model download [url]
 ./ai-stack build
@@ -40,6 +41,10 @@
 - `dashboard` builds/runs the dashboard service.
 - `agentic-rag` is optional and should be started after the main stack.
 - `status` uses `AI_STACK_API_KEY` automatically when it is set in `.env`.
+- `model add` opens an interactive wizard for a direct GGUF URL, downloads the
+  file, and activates it in `.env`. Pass `--help` for non-interactive options.
+  The command accepts single-file models compatible with llama.cpp; run
+  `apply-config` afterward to update a running stack.
 - `apply-config` recreates the model, proxy, Agentic RAG, and dashboard containers
   with the current `.env` values without rebuilding images.
 - `smoke` runs end-to-end curl checks for the stack; `smoke production` also

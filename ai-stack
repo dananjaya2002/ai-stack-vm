@@ -35,6 +35,7 @@ Usage:
   ./ai-stack profile laptop|vm16|vm60
   ./ai-stack model list
   ./ai-stack model path
+  ./ai-stack model add [options]
   ./ai-stack model use <file.gguf>
   ./ai-stack model download [url]
   ./ai-stack build
@@ -793,6 +794,13 @@ write_model_env() {
   set_env_var MODEL_URL "${model_url}"
   set_env_var MODEL_SHA256 ""
 
+  apply_model_profile_settings "${model_profile}"
+
+  info "updated .env for ${model_name}"
+}
+
+apply_model_profile_settings() {
+  local model_profile="$1"
   case "${model_profile}" in
     laptop)
       set_env_var LLAMA_THREADS "6"
@@ -824,9 +832,8 @@ write_model_env() {
       set_env_var LLAMA_CPU_RESERVATION "30"
       set_env_var LLAMA_MEMORY_RESERVATION "24gb"
       ;;
+    *) fail "model profile must be laptop, vm16, or vm60" ;;
   esac
-
-  info "updated .env for ${model_name}"
 }
 
 require_install_dependencies() {
@@ -1148,6 +1155,147 @@ cmd_model_use() {
   info "MODEL_FILE=$(basename "${file}")"
 }
 
+model_add_usage() {
+  cat <<'USAGE'
+Usage:
+  ./ai-stack model add [options]
+
+Options:
+  --name NAME          Model ID exposed by the API
+  --url URL            Direct HTTP(S) URL to one GGUF file
+  --file FILE.gguf     Local filename (defaults to the URL filename)
+  --profile PROFILE    laptop, vm16, or vm60 (defaults to current profile)
+  --size-gb GB         Optional whole-number download size estimate
+  --sha256 HASH        Optional SHA-256 checksum
+  -y, --yes            Skip the confirmation prompt
+  -h, --help           Show this help
+
+Missing values are requested interactively. This runtime supports GGUF models
+that are compatible with llama.cpp; multi-file and non-GGUF models are not
+supported by this command.
+USAGE
+}
+
+model_file_from_url() {
+  local url="$1"
+  basename "${url%%\?*}"
+}
+
+validate_model_add_values() {
+  local name="$1" url="$2" file="$3" profile="$4" size_gb="$5" sha256="$6"
+  local safe_url_pattern='^https?://[A-Za-z0-9./_~:%?=,+@!-]+$'
+
+  [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]] || \
+    fail "model name may contain only letters, numbers, dot, underscore, colon, slash, plus, and hyphen"
+  [[ "${url}" =~ ${safe_url_pattern} ]] || \
+    fail "model URL contains characters that cannot be stored safely in .env; use a direct URL with encoded query values"
+  [[ "${file}" == "$(basename "${file}")" ]] || fail "model filename must not contain a directory"
+  [[ "${file}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*\.gguf$ ]] || \
+    fail "model filename must end in .gguf and contain only safe filename characters"
+  case "${profile}" in laptop|vm16|vm60) ;; *) fail "model profile must be laptop, vm16, or vm60" ;; esac
+  [[ -z "${size_gb}" || "${size_gb}" =~ ^[1-9][0-9]*$ ]] || fail "--size-gb must be a positive whole number"
+  [[ -z "${sha256}" || "${sha256}" =~ ^[A-Fa-f0-9]{64}$ ]] || fail "--sha256 must contain exactly 64 hexadecimal characters"
+}
+
+download_model_file() {
+  local url="$1" dest="$2" sha256="${3:-}"
+  local curl_args=(--fail --location --continue-at - --output "${dest}")
+
+  have curl || fail "curl is required to download models"
+  if [[ -n "${HF_TOKEN:-}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${HF_TOKEN}")
+  fi
+
+  info "downloading model to ${dest}"
+  curl "${curl_args[@]}" "${url}"
+
+  if [[ -n "${sha256}" ]]; then
+    have sha256sum || fail "sha256sum is required when a checksum is provided"
+    printf '%s  %s\n' "${sha256}" "${dest}" | sha256sum -c -
+  fi
+  info "model ready: ${dest}"
+}
+
+cmd_model_add() {
+  local name="" url="" file="" profile="" size_gb="" sha256="" assume_yes=0
+  local answer current_profile dest
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --name|--url|--file|--profile|--size-gb|--sha256)
+        (( $# >= 2 )) || fail "$1 requires a value"
+        case "$1" in
+          --name) name="$2" ;;
+          --url) url="$2" ;;
+          --file) file="$2" ;;
+          --profile) profile="$2" ;;
+          --size-gb) size_gb="$2" ;;
+          --sha256) sha256="$2" ;;
+        esac
+        shift 2
+        ;;
+      -y|--yes) assume_yes=1; shift ;;
+      -h|--help) model_add_usage; return 0 ;;
+      *) fail "unknown model add option: $1 (run ./ai-stack model add --help)" ;;
+    esac
+  done
+
+  cmd_init
+  load_env
+  current_profile="${MODEL_PROFILE}"
+
+  if [[ -z "${name}" ]]; then
+    read -r -p "Model name (for example, Qwen3-8B-Q4_K_M): " name || fail "model add cancelled"
+  fi
+  if [[ -z "${url}" ]]; then
+    read -r -p "Direct GGUF download URL: " url || fail "model add cancelled"
+  fi
+  if [[ -z "${file}" ]]; then
+    file="$(model_file_from_url "${url}")"
+    if (( assume_yes == 0 )); then
+      read -r -p "Local filename [${file}]: " answer || fail "model add cancelled"
+      file="${answer:-${file}}"
+    fi
+  fi
+  if [[ -z "${profile}" ]]; then
+    if (( assume_yes == 0 )); then
+      read -r -p "Runtime profile: laptop, vm16, or vm60 [${current_profile}]: " answer || fail "model add cancelled"
+      profile="${answer:-${current_profile}}"
+    else
+      profile="${current_profile}"
+    fi
+  fi
+  if [[ -z "${size_gb}" && ${assume_yes} -eq 0 ]]; then
+    read -r -p "Expected size in GiB (optional): " size_gb || fail "model add cancelled"
+  fi
+  if [[ -z "${sha256}" && ${assume_yes} -eq 0 ]]; then
+    read -r -p "SHA-256 checksum (optional): " sha256 || fail "model add cancelled"
+  fi
+
+  validate_model_add_values "${name}" "${url}" "${file}" "${profile}" "${size_gb}" "${sha256}"
+  dest="${AI_STACK_HOME}/models/${file}"
+
+  printf '\nModel:   %s\nFile:    %s\nProfile: %s\nSource:  %s\n' "${name}" "${dest}" "${profile}" "${url}"
+  if (( assume_yes == 0 )) && ! prompt_yes_no "Download and activate this model? [y/N]: "; then
+    info "model add cancelled"
+    return 0
+  fi
+
+  mkdir -p "${AI_STACK_HOME}/models"
+  download_model_file "${url}" "${dest}" "${sha256}"
+
+  set_env_var MODEL_NAME "${name}"
+  set_env_var MODEL_FILE "${file}"
+  set_env_var MODEL_PROFILE "${profile}"
+  set_env_var MODEL_URL "${url}"
+  set_env_var MODEL_SHA256 "${sha256}"
+  set_env_var MODEL_EXPECTED_SIZE_GB "${size_gb}"
+  apply_model_profile_settings "${profile}"
+
+  info "installed and activated ${name}"
+  info "run ./ai-stack apply-config to load it into a running stack"
+}
+
 cmd_model_download() {
   local url="${1:-}"
   local dir file dest
@@ -1174,14 +1322,7 @@ cmd_model_download() {
   fi
 
   dest="${dir}/${file}"
-  info "downloading model to ${dest}"
-  curl --fail --location --continue-at - --output "${dest}" "${url}"
-
-  load_env
-  if [[ -n "${MODEL_SHA256}" ]]; then
-    printf '%s  %s\n' "${MODEL_SHA256}" "${dest}" | sha256sum -c -
-  fi
-  info "model ready: ${dest}"
+  download_model_file "${url}" "${dest}" "${MODEL_SHA256}"
 }
 
 cmd_build() {
@@ -1887,9 +2028,10 @@ main() {
       case "${sub}" in
         list) cmd_model_list "$@" ;;
         path) cmd_model_path "$@" ;;
+        add) cmd_model_add "$@" ;;
         use) cmd_model_use "$@" ;;
         download) cmd_model_download "$@" ;;
-        *) fail "usage: ./ai-stack model list|path|use|download" ;;
+        *) fail "usage: ./ai-stack model list|path|add|use|download" ;;
       esac
       ;;
     *) fail "unknown command: ${command}" ;;

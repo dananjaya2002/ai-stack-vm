@@ -47,6 +47,35 @@ MODEL_EXPECTED_SIZE_GB=20
 The VM60 profile cannot install without either its selected local GGUF file or
 a URL. This is checked before build.
 
+## Add a custom model
+
+Run the interactive model installer and enter a model name plus a direct URL to
+a single GGUF file:
+
+```bash
+./ai-stack model add
+```
+
+The wizard derives the filename, accepts an optional size estimate and SHA-256
+checksum, downloads the file with resume support, and activates it in `.env`.
+It supports GGUF models compatible with llama.cpp; it does not convert model
+formats or combine split GGUF files. To script the operation:
+
+```bash
+./ai-stack model add \
+  --name Qwen3-8B-Q4_K_M \
+  --url https://example.invalid/models/Qwen3-8B-Q4_K_M.gguf \
+  --profile vm16 \
+  --size-gb 6 \
+  --yes
+```
+
+If the stack is already running, load the new model with:
+
+```bash
+./ai-stack apply-config
+```
+
 ## Manual setup
 
 ```bash

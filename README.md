@@ -95,6 +95,7 @@ See [Installation](docs/setup/installation.md),
 ./ai-stack compute status
 ./ai-stack compute auto|cpu|gpu
 ./ai-stack doctor
+./ai-stack model add
 ./ai-stack build
 ./ai-stack up
 ./ai-stack status
